@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>이지스 플래닝본선</title>
+    <title>본선통합배차 자동프로그램</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/shorthandcss@1.1.1/dist/shorthand.min.css" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Muli:200,300,400,500,600,700,800,900&display=swap" />
     <link rel="stylesheet" type="text/css"
@@ -46,13 +46,13 @@
             background: linear-gradient(135deg, #f9f9f9 50%, #e6e6fa 100%);
         }
         .title-highlight {
-        background: linear-gradient(135deg, #ffcc80, #ffb74d);
-        color: white;
-        padding: 10px 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        display: inline-block;
-    }
+            background: linear-gradient(135deg, #ffcc80, #ffb74d);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            display: inline-block;
+        }
     </style>
 </head>
 
@@ -71,7 +71,7 @@
     <section class="auth-section gradient-bg">
         <div class="auth-container">
             <div class="login-container">
-                <h2 class="text-dark fs-8 lh-2 fw-800 text-center margin-bottom title-highlight">이지스 본선배차</h2>
+                <h2 class="text-dark fs-8 lh-2 fw-800 text-center margin-bottom title-highlight" style="position: relative; left: 20px;">본선통합배차</h2>
                 <form id="loginForm" action="/LOGIN" method="POST" class="flex flex-column">
                     <div class="input-group my-3">
                         <label for="NAME" class="text-dark fs-5 ">아이디</label>
@@ -390,7 +390,7 @@
         
         // 회원 가입 버튼 클릭 시 모달 표시
         document.querySelector('.btn-signup').addEventListener('click', function(event) {
-            event.preventDefault(); // 기본 이벤트(페이지 새로고침) 방지
+            event.preventDefault(); 
             showSignupModal();
         });
         
@@ -415,7 +415,7 @@
                 body: JSON.stringify({
                     NAME: NAME,
                     ID: ID,
-                    PASSWORD: PASSWORD, // 클라이언트에서 입력한 비밀번호 그대로 전송
+                    PASSWORD: PASSWORD,
                     PHONE: PHONE,
                     CAR: CAR,
                     CAR_ID: CAR_ID,
