@@ -149,10 +149,10 @@
             </div>
             <div class="title blinking-text">현재 배차</div>
             <div class="row">
-                <div class="cell header">구간</div>
+                <div class="cell header" >구간</div>
             </div>
             <div class="row">
-                <div class="cell"><%= currentData.SANG_HA %></div>
+                <div class="cell" id="SANG_HA"><%= currentData.SANG_HA %></div>
             </div>
             <div class="row">
                 <div class="cell header">컨테이너</div>
@@ -160,7 +160,7 @@
             </div>
             <div class="row">
                 <div class="cell" id="CON_NO"><%= currentData.CON_NO %></div>
-                <div class="cell"><%= currentData.CON_KU %></div>
+                <div class="cell" ><%= currentData.CON_KU %></div>
             </div>
             <div class="row">
                 <div class="cell header">중량</div>
@@ -180,7 +180,7 @@
             </div>
             <div class="row">
                 <button class="btn2" id="endDriving2">운행종료</button>
-                <button class="btn">전송요청</button>
+                <button class="btn" id="copino">전송요청</button>
             </div>
             <div class="row">
                 <button class="btn2" id="loadingComplete">상차완료</button>
@@ -207,7 +207,7 @@
                 <div class="cell" id="CON_KU2"></div>
             </div>
             <div class="row">
-                <button class="btn">전송요청</button>
+                <button class="btn" id="copino2">전송요청</button>
             </div>
             <div class="row">
                 <button class="btn2" id="endDriving">운행종료</button>
@@ -224,10 +224,11 @@
 document.addEventListener('DOMContentLoaded', function() {
     console.log("JavaScript 코드가 로드되었습니다.");
 
-    let unloadingCompleted = false;
-    let endDrivingClickable = false;
     let currentTotal;
     let sasiValue;
+    let isUnloadingComplete = false; // 하차완료 여부를 확인하는 플래그 변수
+    let loadingCompleteTimeout;
+    let unloadingCompleteTimeout;
 
     function fetchCurrentTotal() {
         fetch('/get-current-data')
@@ -235,11 +236,11 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data && data.assignedTotal !== undefined && data.currentData && data.currentData.SASI !== undefined) {
                 currentTotal = data.assignedTotal;
-                sasiValue = data.currentData.SASI; // SASI 값 저장
+                sasiValue = data.currentData.SASI;
                 console.log(`현재 TOTAL 값: ${currentTotal}`);
                 console.log(`현재 SASI 값: ${sasiValue}`);
             } else {
-                console.error('No assignedTotal or SASI found in data:', data);
+                console.error('TOTAL 또는 SASI 값이 설정되지 않았습니다.', data);
                 alert('TOTAL 또는 SASI 값이 설정되지 않았습니다.');
             }
         })
@@ -249,15 +250,18 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // TOTAL 값을 설정하기 위해 페이지 로드 시 호출
+    // 페이지 로드 시 현재 TOTAL 값 불러오기
     fetchCurrentTotal();
 
+    // 상차완료 버튼 클릭 이벤트 처리
     document.getElementById('loadingComplete').addEventListener('click', function() {
         if (!currentTotal || !sasiValue) {
             console.error('currentTotal 또는 SASI 값이 설정되지 않았습니다.');
             alert('TOTAL 또는 SASI 값이 설정되지 않았습니다.');
             return;
         }
+
+        clearTimeout(loadingCompleteTimeout); // 상차완료 타이머 클리어
 
         fetch('/calculate-next-dispatch', {
             method: 'POST',
@@ -269,16 +273,21 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                // 서버로부터 받은 다음 배차 데이터를 UI에 반영
                 document.getElementById('SANG_HA2').innerText = data.nextDispatch.SANG_HA;
                 document.getElementById('CON_NO2').innerText = data.nextDispatch.CON_NO;
                 document.getElementById('CON_KU2').innerText = data.nextDispatch.CON_KU;
                 document.getElementById('nextDispatchSection').style.display = 'block';
 
-                // 현재 배차 관련 버튼들을 숨기고 하차완료 버튼을 표시
                 document.getElementById('endDriving2').style.display = 'none';
                 document.getElementById('loadingComplete').style.display = 'none';
                 document.getElementById('unloadingComplete').style.display = 'block';
+
+                isUnloadingComplete = false; // 다음 배차를 위해 초기화
+
+                // 하차완료 타이머 시작 (2시간)
+                unloadingCompleteTimeout = setTimeout(function() {
+                    endDriving();
+                }, 2 * 60 * 60 * 1000); // 2시간 후 실행
             } else {
                 alert(data.message);
             }
@@ -289,103 +298,140 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     document.getElementById('unloadingComplete').addEventListener('click', function() {
-        console.log("하차완료 버튼 클릭됨.");
-        unloadingCompleted = true;
-        endDrivingClickable = true;
-        console.log("운행종료 버튼 클릭 가능 상태로 변경됨.");
-    });
+        console.log("하차 완료 버튼 클릭됨.");
+        const conNo = document.getElementById('CON_NO').innerText.trim();
 
-    document.getElementById('endDriving2').addEventListener('click', function() {
-        console.log("운행종료 버튼 클릭됨.");
-        const CON_NO = document.getElementById('CON_NO').innerText.trim();
-        if (!CON_NO) {
-            console.error('CON_NO 값이 설정되지 않았습니다.');
-            alert('CON_NO 값이 설정되지 않았습니다.');
-            return;
-        }
-
-        fetch('/end-driving', {
+        fetch('/api/update-ha-work', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ CON_NO })
+            body: JSON.stringify({ conNo: conNo, status: '완료' })
         })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                window.location.href = '/LOGIN';
+                console.log('하차 완료 업데이트 성공:', data);
+                isUnloadingComplete = true; // 하차 완료 상태 설정
+                alert('하차 완료 처리 되었습니다.');
             } else {
-                alert(data.message);
+                console.error('하차 완료 업데이트 실패:', data.message);
+                alert('하차 완료 실패: ' + data.message);
             }
         })
         .catch(error => {
-            console.error('운행 종료 중 오류 발생:', error);
+            console.error('하차 완료 업데이트 중 오류 발생:', error);
+            alert('하차 완료 업데이트 중 오류 발생.');
         });
     });
+    document.getElementById('endDriving2').addEventListener('click', function() {
+        if (confirm("운행을 정말 종료하시겠습니까?")) {
+            console.log("운행종료 버튼 클릭됨.");
+            const CON_NO = document.getElementById('CON_NO').innerText.trim();
+            if (!CON_NO) {
+                console.error('CON_NO 값이 설정되지 않았습니다.');
+                alert('CON_NO 값이 설정되지 않았습니다.');
+                return;
+            }
 
+            fetch('/end-driving', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ CON_NO })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/LOGIN';
+                } else {
+                    alert(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('운행 종료 중 오류 발생:', error);
+            });
+        }
+    });
 
     document.getElementById('endDriving').addEventListener('click', function() {
-        console.log("운행종료 버튼 클릭됨.");
-        const CON_NO = document.getElementById('CON_NO2').innerText.trim();
-        if (!CON_NO) {
-            console.error('CON_NO 값이 설정되지 않았습니다.');
-            alert('CON_NO 값이 설정되지 않았습니다.');
+        if (!isUnloadingComplete) {
+            alert("하차완료 후 가능합니다");
             return;
         }
 
-        fetch('/end-driving', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ CON_NO })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                window.location.href = '/LOGIN';
-            } else {
-                alert(data.message);
+        if (confirm("운행을 정말 종료하시겠습니까?")) {
+            console.log("운행종료 버튼 클릭됨.");
+            const CON_NO = document.getElementById('CON_NO2').innerText.trim();
+            if (!CON_NO) {
+                console.error('CON_NO 값이 설정되지 않았습니다.');
+                alert('CON_NO 값이 설정되지 않았습니다.');
+                return;
             }
-        })
-        .catch(error => {
-            console.error('운행 종료 중 오류 발생:', error);
-        });
+
+            fetch('/end-driving', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ CON_NO })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/LOGIN';
+                } else {
+                    alert(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('운행 종료 중 오류 발생:', error);
+            });
+        }
     });
 
+    document.getElementById('startNextBatch').addEventListener('click', function() {
+        if (!isUnloadingComplete) {
+            alert("하차완료 후 가능합니다");
+            return;
+        }
 
-        document.getElementById('startNextBatch').addEventListener('click', function() {
         console.log("다음 배차 시작 버튼 클릭됨.");
 
-        const nextData = {
-            SANG_HA: document.getElementById('SANG_HA2').innerText.trim(),
-            CON_NO: document.getElementById('CON_NO2').innerText.trim(),
-            CON_KU: document.getElementById('CON_KU2').innerText.trim()
-        };
+        if (confirm("다음 배차로 이동하시겠습니까?")) {
+            const nextData = {
+                SANG_HA: document.getElementById('SANG_HA2').innerText.trim(),
+                CON_NO: document.getElementById('CON_NO2').innerText.trim(),
+                CON_KU: document.getElementById('CON_KU2').innerText.trim()
+            };
 
-        fetch('/start-next-batch', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(nextData)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                alert('다음 배차가 성공적으로 설정되었습니다.');
-                // /driver4 페이지로 이동
-                window.location.href = '/driver4';
-            } else {
-                alert(data.message);
-            }
-        })
-        .catch(error => {
-            console.error('다음 배차 설정 중 오류 발생:', error);
-        });
+            fetch('/start-next-batch', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(nextData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('다음 배차 페이지로 이동합니다.');
+                    window.location.href = '/driver4';
+                } else {
+                    alert(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('다음 배차 설정 중 오류 발생:', error);
+            });
+        }
     });
-});
+
+    // 상차완료 타이머 시작 (2시간)
+    loadingCompleteTimeout = setTimeout(function() {
+        endDriving();
+    }, 2 * 60 * 60 * 1000); // 2시간 후 실행
 
     let sessionTimeout;
 
@@ -393,7 +439,7 @@ document.addEventListener('DOMContentLoaded', function() {
         clearTimeout(sessionTimeout);
         sessionTimeout = setTimeout(() => {
             alert('오랜 시간 활동이 없어 로그아웃됩니다.');
-            window.location.href = '/'; // 로그아웃 URL로 변경
+            window.location.href = '/';
         }, 5 * 60 * 60 * 1000); // 5시간 타임아웃 설정
     }
 
@@ -401,22 +447,170 @@ document.addEventListener('DOMContentLoaded', function() {
     window.onload = resetSessionTimeout;
     document.onmousemove = resetSessionTimeout;
     document.onkeypress = resetSessionTimeout;
+});
 
-    // 폼 데이터가 변경될 때 세션 스토리지에 저장
-    document.querySelectorAll('input, textarea, select').forEach(element => {
-        element.addEventListener('input', () => {
-            sessionStorage.setItem(element.id, element.value);
-        });
+document.addEventListener('DOMContentLoaded', function() {
+    const conNoElement = document.getElementById('CON_NO');
+    const sangHaElement = document.getElementById('SANG_HA');
+
+    if (!conNoElement || !sangHaElement) {
+        console.error('CON_NO 또는 SANG_HA 요소를 찾을 수 없습니다.');
+        return;
+    }
+
+    const conNo = conNoElement.innerText.trim();
+    const sangHa = sangHaElement.innerText.trim();
+
+    console.log('요청 데이터:', {
+        conNo: conNo,
+        sangHa: sangHa
     });
 
-    // 페이지 로드 시 세션 스토리지에서 폼 데이터 복원
-    window.onload = () => {
-        document.querySelectorAll('input, textarea, select').forEach(element => {
-            if (sessionStorage.getItem(element.id)) {
-                element.value = sessionStorage.getItem(element.id);
-            }
+    fetch('/api/insert-log', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            conNo: conNo,
+            sangHa: sangHa
+        })
+    })
+    .then(response => {
+        console.log('응답 상태 코드:', response.status);
+        return response.json(); // JSON으로 변환하여 다음 .then으로 전달
+    })
+    .then(data => {
+        console.log('응답 데이터:', data);
+        if (data.success) {
+            console.log('로그 삽입 성공:', data);
+        } else {
+            console.error('로그 삽입 실패:', data.message);
+        }
+    })
+    .catch(error => {
+        console.error('로그 삽입 중 오류 발생:', error);
+    });
+});
+
+
+
+document.getElementById('loadingComplete').addEventListener('click', function() {
+    const conNo = document.getElementById('CON_NO').innerText.trim();
+
+    fetch('/api/update-sang-work', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ conNo: conNo, status: '완료' })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            console.log('상차 완료 업데이트 성공:', data);
+        } else {
+            console.error('상차 완료 업데이트 실패:', data.message);
+        }
+    })
+    .catch(error => {
+        console.error('상차 완료 업데이트 중 오류 발생:', error);
+    });
+});
+
+
+document.getElementById('copino').addEventListener('click', function() {
+    console.log("copino 버튼 클릭됨");
+    const conNo = document.getElementById('CON_NO').innerText.trim();
+
+    if (!conNo) {
+        console.error('CON_NO 값이 설정되지 않았습니다.');
+        alert('CON_NO 값이 설정되지 않았습니다.');
+        return;
+    }
+
+    fetch('/api/send-data', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ conNo: conNo })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('전송요청이 완료되었습니다. 전송 확인 후 출발하세요.');
+        } else {
+            alert('데이터 전송 실패: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('데이터 전송 중 오류 발생:', error);
+    });
+});
+
+document.getElementById('copino2').addEventListener('click', function() {
+    console.log("copino2 버튼 클릭됨");
+    const conNo2 = document.getElementById('CON_NO2').innerText.trim();
+
+    if (!conNo2) {
+        console.error('CON_NO2 값이 설정되지 않았습니다.');
+        alert('CON_NO2 값이 설정되지 않았습니다.');
+        return;
+    }
+
+    fetch('/api/send-data', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ conNo: conNo2 })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('전송요청이 완료되었습니다. 전송 확인 후 출발하세요.');
+        } else {
+            alert('데이터 전송 실패: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('데이터 전송 중 오류 발생:', error);
+    });
+});
+
+
+
+    const socket = io();
+        
+        socket.on('connect', () => {
+            socket.emit('registerSession', '<%= sessionID %>'); // 서버로 세션 ID 전달
         });
-    };
+
+        socket.on('forceLogout', () => {
+            alert('다른 PC에서 로그인되었습니다. 메인화면으로 이동합니다.');
+            window.location.href = '/';
+        });
+
+    document.getElementById('loadingComplete').addEventListener('click', function() {
+    const newLocation = document.getElementById('SANG_HA').innerText.trim(); // 업데이트할 위치 데이터 가져오기
+
+    fetch('/api/update-current-location', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ newLocation })
+    })
+    .then(response => response.json())
+    .then(data => {
+
+    })
+    .catch(error => {
+        console.error('CURRENT_LOCATION 업데이트 중 오류 발생:', error);
+        alert('업데이트 중 오류가 발생했습니다.');
+    });
+});
 
 </script>
 </body>

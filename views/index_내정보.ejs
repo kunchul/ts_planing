@@ -131,6 +131,99 @@
             }
     
         }
+
+        .auth-section {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh; /* 화면 전체 높이를 차지하도록 설정 */
+        background: rgba(255, 255, 255, 0.9); /* 배경을 약간 투명하게 */
+    }
+
+    .auth-container {
+        background-color: #f7f9fc;
+        border-radius: 10px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        padding: 30px;
+        max-width: 400px;
+        width: 90%;
+        text-align: center;
+    }
+
+    .auth-container h1 {
+        font-size: 24px;
+        margin-bottom: 20px;
+        color: #4a4a4a;
+        font-family: 'Jua', sans-serif;
+    }
+
+    .input-group {
+        margin-bottom: 15px;
+        text-align: left;
+    }
+
+    .input-group label {
+        display: block;
+        font-size: 14px;
+        color: #666;
+        margin-bottom: 5px;
+    }
+
+    .input-group input {
+        width: calc(100% - 20px);
+        padding: 10px;
+        border-radius: 5px;
+        border: 1px solid #ccc;
+        font-size: 14px;
+        background-color: #fff;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) inset;
+    }
+
+    .input-group input:focus {
+        border-color: #7f8cff;
+        outline: none;
+        box-shadow: 0 0 8px rgba(127, 140, 255, 0.5);
+    }
+
+    .button-container {
+        margin-top: 20px;
+    }
+
+    .btn-login {
+        background-color: #7f8cff;
+        color: white;
+        padding: 12px 20px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background-color 0.3s ease;
+        width: 100%;
+    }
+
+    .btn-login:hover {
+        background-color: #6f7de6;
+    }
+
+    @media (max-width: 900px) {
+        .auth-container {
+            padding: 15px;
+            max-width: 90%;
+        }
+
+        .auth-container h1 {
+            font-size: 20px;
+        }
+
+        .input-group input {
+            padding: 8px;
+            font-size: 13px;
+        }
+
+        .btn-login {
+            font-size: 14px;
+        }
+    }
     </style>
 </head>
 
@@ -167,11 +260,47 @@
         </div>
     </nav>
 
-    <div class="center-screen">
-        <% if (user && (user.role === 'car' || user.role === 'manager')) { %>
-            <button class="start-driving-button">운행시작</button>
-        <% } %>
-    </div>
+    <main class="auth-section">
+        <div class="auth-container">
+            <h1 style="text-align: center; color: white; font-size: 24px;">회원정보 수정</h1>
+            <form id="update-form" action="/update-user" method="post">
+                <div class="input-group">
+                    <label for="name">성함</label>
+                    <input type="text" id="name" name="name" required>
+                </div>
+                <div class="input-group">
+                    <label for="password">비밀번호</label>
+                    <input type="text" id="password" name="password" required>
+                </div>
+                <div class="input-group">
+                    <label for="phone">연락처</label>
+                    <input type="text" id="phone" name="phone" required>
+                </div>
+                <div class="input-group">
+                    <label for="car">차량번호</label>
+                    <input type="text" id="car" name="car" required>
+                </div>
+                <div class="input-group">
+                    <label for="car_id">차량아이디</label>
+                    <input type="text" id="car_id" name="car_id" required>
+                </div>
+                <div class="input-group">
+                    <label for="SASI" class="text-dark">샤시종류:</label>
+                    <select id="SASI" name="SASI" style="width: 95%; padding: 10px; font-size: 12px; border-radius: 4px; border: 1px solid #ddd; margin: 5px 0; background-color: #ffffff; color: #333; box-sizing: border-box;">
+                        <option value="라인샤시" <%= user.SASI === '라인샤시' ? 'selected' : '' %> style="background-color: #ffffff; color: #333;">라인샤시</option>
+                        <option value="콤바인샤시" <%= user.SASI === '콤바인샤시' ? 'selected' : '' %> style="background-color: #ffffff; color: #333;">콤바인샤시</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="part">배차소속</label>
+                    <input type="text" id="part" name="part" required>
+                </div>
+                <div class="button-container">
+                    <button type="submit" class="btn-login">정보업데이트</button>
+                </div>
+            </form>
+        </div>
+    </main>
 
     <footer class="p-5 md-p-l5 gradient-bg">
         <div class="flex flex-wrap">
@@ -223,34 +352,48 @@
 </html>
 
 
-<style>
 
-    </style>
-    
-    
-    <!-- 스크립트 추가 원본-->
     <script>
-    document.querySelector('.start-driving-button').addEventListener('click', function() {
-        const userId = '<%= user.id %>';  // 현재 로그인한 사용자의 ID를 가져옴
-        const currentTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
+$(document).ready(function() {
+    // 사용자 정보를 가져와서 폼에 채워 넣는 함수
+    $.get('/api/my-info', function(data) {
+        $('#name').val(data.NAME);
+        $('#password').val(data.PASSWORD);
+        $('#phone').val(data.PHONE);
+        $('#car').val(data.CAR);
+        $('#car_id').val(data.CAR_ID);
+        $('#SASI').val(data.SASI); // 드롭다운에서 값 설정
+        $('#part').val(data.PART);
+    });
+
+    // 폼 제출 시 AJAX 요청
+    $('#update-form').submit(function(event) {
+        event.preventDefault(); // 폼의 기본 제출 동작을 막음
+
+        var formData = {
+            name: $('#name').val(),
+            password: $('#password').val(),
+            phone: $('#phone').val(),
+            car: $('#car').val(),
+            car_id: $('#car_id').val(),
+            SASI: $('#SASI').val(), // 드롭다운에서 선택된 값 가져오기
+            part: $('#part').val()
+        };
 
         $.ajax({
-            url: '/start-driving',  // 서버 측 API 엔드포인트
-            method: 'POST',
-            data: {
-                userId: userId,
-                currentTime: currentTime
-            },
+            type: 'POST',
+            url: '/update-user',
+            data: formData,
             success: function(response) {
-                if (response.success) {
-                    window.location.href = '/driver1';
-                } else {
-                    alert('운행 시작에 실패했습니다.');
-                }
+                alert(response.message); // 서버의 응답 메시지를 경고창으로 표시
+                window.location.href = '/LOGIN'; // 첫 화면으로 리디렉션
             },
-            error: function() {
-                alert('운행 시작 중 오류가 발생했습니다.');
+            error: function(xhr, status, error) {
+                alert('정보 업데이트 중 오류가 발생했습니다.'); // 오류 발생 시 메시지 표시
             }
         });
     });
+});
+
+
     </script>
