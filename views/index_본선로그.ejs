@@ -39,8 +39,19 @@
     </div>
 </div>
 
+<div id="cancelModal" class="modal">
+    <div class="modal-content">
+        <h4>배차 취소</h4>
+        <textarea id="cancel-input" placeholder="컨테이너 번호를 입력하세요."></textarea>
+    </div>
+    <div class="modal-footer">
+        <button onclick="deleteOrder()" class="modal-close waves-effect waves-green btn-flat">배차취소</button>
+    </div>
+</div>
+
 <!-- Modal Trigger -->
-<button onclick="openModal()" class="open-modal-btn">반입확인</button>
+<button onclick="openModal('containerModal')" class="open-modal-btn">반입확인</button>
+<button onclick="openModal('cancelModal')" class="open-modal-btn">배차취소</button>
 
 
 
@@ -412,7 +423,7 @@
 <!-- 스크립트 추가 -->
 <script>
 
-    function openModal() {
+function openModal() {
     document.getElementById('containerModal').style.display = 'block';
     }
 
@@ -487,6 +498,80 @@
     // 페이지가 로드된 후 함수를 호출하여 행 정렬
     moveRowsBasedOnCondition();
 });
+
+function openModal(modalId) {
+        document.getElementById(modalId).style.display = 'block';
+    }
+
+    function closeModal(modalId) {
+        document.getElementById(modalId).style.display = 'none';
+    }
+
+    function deleteContainer() {
+        var input = document.getElementById('container-input').value;
+        var containerIds = input.split('\n').map(id => id.trim());
+        console.log("Deleting container IDs:", containerIds); // Debugging
+
+        fetch('/delete-container2', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ containerIds: containerIds }),
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('네트워크 응답이 올바르지 않습니다');
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('삭제 완료:', data);
+            closeModal('containerModal'); // 성공 시 모달 닫기
+        })
+        .catch(error => {
+            console.error('삭제 중 오류 발생:', error);
+        });
+    }
+
+    function deleteOrder() {
+        var input = document.getElementById('cancel-input').value;
+        var containerIds = input.split('\n').map(id => id.trim());
+        console.log("Deleting container IDs:", containerIds); // Debugging
+
+        fetch('/delete-order', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ containerIds: containerIds }),
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('네트워크 응답이 올바르지 않습니다');
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('삭제 완료:', data);
+            closeModal('cancelModal'); // 성공 시 모달 닫기
+        })
+        .catch(error => {
+            console.error('삭제 중 오류 발생:', error);
+        });
+    }
+
+    // 모달 밖을 클릭하면 모달 닫기
+    window.onclick = function(event) {
+        var containerModal = document.getElementById('containerModal');
+        var cancelModal = document.getElementById('cancelModal');
+        if (event.target == containerModal) {
+            closeModal('containerModal');
+        }
+        if (event.target == cancelModal) {
+            closeModal('cancelModal');
+        }
+    }
 
 
 

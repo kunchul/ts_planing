@@ -1,28 +1,23 @@
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
+const { Server } = require("socket.io");
 const bodyParser = require('body-parser');
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server); 
-
+const io = new Server(server);
 const mysql = require('mysql');
 const path = require('path');
 const session = require('express-session');
+const cron = require('node-cron');
+const { exec } = require('child_process');
 const moment = require('moment-timezone');
+const crypto = require('crypto');
 
-
-
+let activeSessions = {};
 
 // 대한민국 서울 시간대로 현재 시간을 설정하는 함수
 function getCurrentSeoulTime() {
     return moment().tz('Asia/Seoul').format('YYYY-MM-DD HH:mm:ss');
-}
-
-
-
-function getCurrentSeoulTime2() {
-    return moment().tz('Asia/Seoul').format('YYYY-MM-DD');
 }
 
 // 세션 미들웨어 설정
@@ -37,7 +32,18 @@ app.use(session({
     }
 }));
 
-let activeSessions = {};
+// 클라이언트가 서버에 연결되었을 때
+io.on('connection', (socket) => {
+    console.log('a user connected');
+
+    socket.on('disconnect', () => {
+        console.log('user disconnected');
+    });
+
+    socket.on('registerSession', (sessionId) => {
+        activeSessions[sessionId] = socket;
+    });
+});
 
 // 세션 만료 시 로그아웃 처리
 app.use((req, res, next) => {
@@ -70,13 +76,9 @@ app.use((req, res, next) => {
 function startNewSession(req, res, user, connection) {
     const sessionId = req.sessionID;
 
-    if (activeSessions[user.ID]) {
-        const oldSocketId = activeSessions[user.ID];
-        io.to(oldSocketId).emit('forceLogout');
-        delete activeSessions[user.ID]; // 이전 세션 삭제
+    if (activeSessions[sessionId]) {
+        activeSessions[sessionId].emit('forceLogout');
     }
-
-    activeSessions[user.ID] = sessionId; // 새로운 세션 저장
 
     connection.query('UPDATE bon_user SET session_id = ? WHERE ID = ?', [sessionId, user.ID], (err) => {
         if (err) {
@@ -91,7 +93,7 @@ function startNewSession(req, res, user, connection) {
             role: user.ROLE
         };
 
-        // 사용자가 이전에 있던 페이지로 리디렉트
+        // 사용자가 이전에 있던 페이지로 리다이렉트
         const redirectTo = req.session.returnTo || '/LOGIN';
         delete req.session.returnTo;
 
@@ -100,28 +102,13 @@ function startNewSession(req, res, user, connection) {
     });
 }
 
-io.on('connection', (socket) => {
-    socket.on('registerSession', (sessionID) => {
-        // 이미 동일한 사용자가 로그인한 세션이 있다면 해당 세션을 로그아웃 처리
-        for (const id in activeSessions) {
-            if (activeSessions[id].sessionID === sessionID) {
-                activeSessions[id].socket.emit('forceLogout');
-                delete activeSessions[id];
-            }
-        }
-
-        // 현재 소켓을 세션 ID와 연결하여 activeSessions에 저장
-        activeSessions[sessionID] = { socket: socket, sessionID: sessionID };
-
-        socket.on('disconnect', () => {
-            // 소켓이 연결 해제되면 activeSessions에서 제거
-            delete activeSessions[sessionID];
-        });
-    });
+// 사용자가 특정 페이지를 방문했을 때 해당 페이지 정보를 세션에 저장
+app.use((req, res, next) => {
+    if (req.session && req.session.user) {
+        req.session.lastPage = req.originalUrl; // 사용자가 마지막으로 방문한 페이지 저장
+    }
+    next();
 });
-
-
-
 
 // 세션을 유지하기 위한 간단한 API 라우트
 app.get('/keep-session-alive', (req, res) => {
@@ -153,35 +140,19 @@ const dbConfig2 = {
     charset: 'utf8mb4'
 };
 
-
-
 function createConnection(dbConfig) {
     return mysql.createConnection(dbConfig);
 }
 
-// 역할 검사를 위한 미들웨어 함수
-function checkRoleForCarOrManager(req, res, next) {
-    if (req.session.user && (req.session.user.role === 'car' || req.session.user.role === 'manager')) {
-        next(); // 역할이 일치하면 다음 미들웨어로 진행
-    } else {
-        res.redirect('/'); // 일치하지 않으면 홈 페이지로 리다이렉트
-    }
+// 페이지 권한 체크
+function checkRole(allowedRoles) {
+    return function(req, res, next) {
+        if (!req.session.user || !allowedRoles.includes(req.session.user.role)) {
+            return res.redirect('/');
+        }
+        next();
+    };
 }
-
-// 세션 확인 미들웨어
-function sessionChecker(req, res, next) {
-    if (!req.session.user) {
-        return res.redirect('/LOGIN'); // 세션이 없으면 로그인 페이지로 리디렉트
-    }
-    next(); // 세션이 있으면 다음 미들웨어로 진행
-}
-
-// 세션 ID 전달 미들웨어
-function sessionIDProvider(req, res, next) {
-    res.locals.sessionID = req.sessionID;
-    next();
-}
-
 
 // 환경 변수에서 포트 번호를 읽어옴-----------------------------------------------------------------------------------------------------------------
 const PORT = process.env.PORT || 31681;
@@ -347,15 +318,17 @@ app.get('/LOGIN', (req, res) => {
 
         if (userResults.length > 0) {
             const user = userResults[0];
-            req.session.user = {
-                id: userId,
-                name: user.NAME,
-                car: user.CAR,
-                role: user.ROLE
-            };
+            const car = user.CAR;
+            const name = user.NAME;
+            const role = user.ROLE;
 
             res.render('index_로그인후', {
-                user: req.session.user,
+                user: {
+                    id: userId,
+                    name: name,
+                    car: car,
+                    role: role
+                },
                 sessionID: req.sessionID
             });
         } else {
@@ -366,15 +339,18 @@ app.get('/LOGIN', (req, res) => {
 });
 
 // '/driver1' 라우트 설정-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-app.get('/driver1', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
+app.get('/driver1', (req, res) => {
     if (!req.session.user) {
+        // 사용자가 로그인하지 않았으면 홈페이지로 리다이렉트
         return res.redirect('/');
     }
 
+    // 로그인 후 이전 페이지 정보를 저장하기 위해 req.session.returnTo 설정
     if (!req.session.returnTo) {
         req.session.returnTo = '/driver1';
     }
 
+    // 사용자가 로그인한 경우
     const userId = req.session.user.id;
     const connection1 = createConnection(dbConfig1);
 
@@ -425,34 +401,25 @@ app.post('/start-driving', (req, res) => {
     connection.connect((err) => {
         if (err) {
             console.error('데이터베이스 연결 중 오류 발생: ', err);
-            return res.status(500).json({ success: false, message: '데이터베이스 연결 오류', error: err });
+            return res.status(500).json({ success: false, message: '데이터베이스 연결 오류' });
         }
 
         connection.query('SELECT CAR, PART, NAME FROM bon_user WHERE ID = ?', [userId], (error, results) => {
-            if (error) {
-                console.error('사용자 정보를 가져오는 중 오류 발생: ', error);
+            if (error || results.length === 0) {
                 connection.end();
-                return res.status(500).json({ success: false, message: '사용자 정보를 가져오는 중 오류가 발생했습니다.', error });
-            }
-
-            if (results.length === 0) {
-                console.error('사용자 정보를 찾을 수 없음: ID = ', userId);
-                connection.end();
-                return res.status(404).json({ success: false, message: '사용자 정보를 찾을 수 없습니다.' });
+                return res.status(500).json({ success: false, message: '사용자 정보를 가져오는 중 오류가 발생했습니다.' });
             }
 
             const { CAR, PART, NAME } = results[0];
 
             // bon_carplayer 테이블에 인서트
-            const insertQuery = 'INSERT INTO bon_carplayer (CAR, `ON`, PART, NAME) VALUES (?, ?, ?, ?)' ;
+            const insertQuery = 'INSERT INTO bon_carplayer (CAR, `ON`, PART, NAME) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE CAR=VALUES(CAR), `ON`=VALUES(`ON`), PART=VALUES(PART), NAME=VALUES(NAME)';
             connection.query(insertQuery, [CAR, currentTime, PART, NAME], (insertError) => {
+                connection.end();
                 if (insertError) {
-                    console.error('데이터베이스에 값을 삽입하는 중 오류 발생: ', insertError);
-                    connection.end();
-                    return res.status(500).json({ success: false, message: '데이터베이스에 값을 삽입하는 중 오류가 발생했습니다.', error: insertError });
+                    return res.status(500).json({ success: false, message: '데이터베이스에 값을 삽입하는 중 오류가 발생했습니다.' });
                 }
 
-                connection.end();
                 res.json({ success: true });
             });
         });
@@ -554,23 +521,30 @@ app.post('/start-driving-sin', (req, res) => {
                 return res.status(500).json({ success: false, message: '사용자 정보를 가져오는 중 오류가 발생했습니다.' });
             }
 
-            const { CAR} = results[0];
+            const { CAR, PART } = results[0];
 
-
-            // LOCATION 컬럼 업데이트
-            const updateQuery = 'UPDATE bon_carplayer SET LOCATION = ? WHERE CAR = ?';
-            connection.query(updateQuery, [location, CAR], (updateError) => {
-                connection.end();
-                if (updateError) {
-                    return res.status(500).json({ success: false, message: '데이터베이스에 LOCATION 값을 업데이트하는 중 오류가 발생했습니다.' });
+            // bon_carplayer 테이블에 인서트
+            const insertQuery = 'INSERT INTO bon_carplayer (CAR, `ON`, PART) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE CAR=VALUES(CAR), `ON`=VALUES(`ON`), PART=VALUES(PART)';
+            connection.query(insertQuery, [CAR, currentTime, PART], (insertError) => {
+                if (insertError) {
+                    connection.end();
+                    return res.status(500).json({ success: false, message: '데이터베이스에 값을 삽입하는 중 오류가 발생했습니다.' });
                 }
 
-                res.json({ success: true });
+                // LOCATION 컬럼 업데이트
+                const updateQuery = 'UPDATE bon_carplayer SET LOCATION = ? WHERE CAR = ?';
+                connection.query(updateQuery, [location, CAR], (updateError) => {
+                    connection.end();
+                    if (updateError) {
+                        return res.status(500).json({ success: false, message: '데이터베이스에 LOCATION 값을 업데이트하는 중 오류가 발생했습니다.' });
+                    }
+
+                    res.json({ success: true });
+                });
             });
         });
     });
 });
-
 
 //신항, 북항에서 뒤로가기 버튼을 눌렀을때
 app.post('/handle-back-button2-1', (req, res) => {
@@ -623,10 +597,14 @@ app.post('/handle-back-button2-1', (req, res) => {
 });
 
 // 북항버튼을 눌렀을때--------------------------------------------------------------------------------------------
-app.post('/start-driving-bok', (req, res) => {
-    const userId = req.session.user.id;
+app.post('/start-driving-buk', (req, res) => {
+    const userId = req.session.user?.id;
+    if (!userId) {
+        return res.status(400).json({ success: false, message: '세션이 유효하지 않거나 사용자가 로그인되지 않았습니다.' });
+    }
+
     const location = '북항';
-    const currentTime = getCurrentSeoulTime(); // 현재 시간을 대한민국 서울 시간으로 설정
+    const currentTime = getCurrentSeoulTime();
     const connection = createConnection(dbConfig1);
 
     connection.connect((err) => {
@@ -641,18 +619,23 @@ app.post('/start-driving-bok', (req, res) => {
                 return res.status(500).json({ success: false, message: '사용자 정보를 가져오는 중 오류가 발생했습니다.' });
             }
 
-            const { CAR} = results[0];
-
-
-            // LOCATION 컬럼 업데이트
-            const updateQuery = 'UPDATE bon_carplayer SET LOCATION = ? WHERE CAR = ?';
-            connection.query(updateQuery, [location, CAR], (updateError) => {
-                connection.end();
-                if (updateError) {
-                    return res.status(500).json({ success: false, message: '데이터베이스에 LOCATION 값을 업데이트하는 중 오류가 발생했습니다.' });
+            const { CAR, PART } = results[0];
+            const insertQuery = 'INSERT INTO bon_carplayer (CAR, `ON`, PART) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE CAR=VALUES(CAR), `ON`=VALUES(`ON`), PART=VALUES(PART)';
+            connection.query(insertQuery, [CAR, currentTime, PART], (insertError) => {
+                if (insertError) {
+                    connection.end();
+                    return res.status(500).json({ success: false, message: '데이터베이스에 값을 삽입하는 중 오류가 발생했습니다.' });
                 }
 
-                res.json({ success: true });
+                const updateQuery = 'UPDATE bon_carplayer SET LOCATION = ? WHERE CAR = ?';
+                connection.query(updateQuery, [location, CAR], (updateError) => {
+                    connection.end();
+                    if (updateError) {
+                        return res.status(500).json({ success: false, message: '데이터베이스에 LOCATION 값을 업데이트하는 중 오류가 발생했습니다.' });
+                    }
+
+                    res.json({ success: true });
+                });
             });
         });
     });
@@ -663,7 +646,7 @@ app.post('/start-driving-bok', (req, res) => {
 
 
 // '/driver2-1' 라우트 설정(신항)-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-app.get('/driver2-1', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
+app.get('/driver2-1', (req, res) => {
     if (!req.session.user) {
         // 사용자가 로그인하지 않았으면 홈페이지로 리디렉트
         return res.redirect('/');
@@ -715,7 +698,7 @@ app.get('/driver2-1', sessionChecker, sessionIDProvider, checkRoleForCarOrManage
 });
 
 // '/driver2-2' 라우트 설정(북항)-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-app.get('/driver2-2', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
+app.get('/driver2-2', (req, res) => {
     if (!req.session.user) {
         // 사용자가 로그인하지 않았으면 홈페이지로 리다이렉트
         return res.redirect('/');
@@ -733,7 +716,7 @@ app.get('/driver2-2', sessionChecker, sessionIDProvider, checkRoleForCarOrManage
             return res.status(500).send('내부 서버 오류');
         }
 
-        connection1.query('SELECT NAME, CAR, ROLE, FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
+        connection1.query('SELECT NAME, CAR, ROLE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
             if (err) {
                 console.error('사용자 데이터 가져오는 중 오류 발생:', err);
                 connection1.end();
@@ -775,6 +758,7 @@ app.post('/update-location', (req, res) => {
 
     // CAR 값이 세션에 없을 경우 데이터베이스에서 직접 조회
     if (!car) {
+        console.error('세션에 CAR 값이 없습니다. 데이터베이스에서 값을 조회합니다.');
         const connection = createConnection(dbConfig1);
 
         connection.connect(err => {
@@ -837,36 +821,37 @@ function updateLocation(car, location, res, connection) {
 
 
 // '/driver3' 라우트 설정-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
+
+app.get('/driver3', (req, res) => {
     if (!req.session.user) {
         return res.redirect('/');
     }
 
-    req.session.returnTo = '/LOGIN';
+    // 항상 req.session.returnTo를 /driver3로 설정
+    req.session.returnTo = '/driver3';
 
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1);
 
-    connection.query('SELECT CAR, SASI, NAME, ROLE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
+    connection.query('SELECT CAR, SASI, session_id FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
         if (err || userResults.length === 0) {
             console.error('bon_user 데이터 조회 중 오류:', err);
             connection.end();
             return res.status(500).send('내부 서버 오류');
         }
 
-        const { CAR, SASI, NAME, ROLE, session_id } = userResults[0];
+        // 세션 유효성 확인
+        if (userResults[0].session_id !== req.sessionID) {
+            req.session.destroy(err => {
+                if (err) console.error('세션 삭제 중 오류:', err);
+                res.redirect('/');
+            });
+            return;
+        }
 
-
-        // 사용자 정보를 세션에 저장
-        req.session.car = CAR;
-        req.session.sasi = SASI;
-        req.session.user = {
-            id: userId,
-            name: NAME,
-            role: ROLE
-        };
-
-        // 필요한 비즈니스 로직 수행
+        const { CAR, SASI } = userResults[0];
+        req.session.car = CAR; // CAR 데이터 세션에 저장
+        req.session.sasi = SASI; // SASI 데이터 세션에 저장
         handleCarAndSasi(CAR, SASI, userResults[0]);
     });
 
@@ -878,84 +863,73 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                 return res.status(500).send('내부 서버 오류');
             }
 
-            const currentLocDigits = carResults[0].CURRENT_LOCATION;
+            const currentLocDigits = carResults[0].CURRENT_LOCATION.slice(-5); // 마지막 5자리
             processTotalValues(SASI, currentLocDigits, user);
         });
     }
 
-     // 이 부분이 첫배차 부분
-     function processTotalValues(SASI, currentLocDigits, user) {
+    function processTotalValues(SASI, currentLocDigits, user) {
         connection.query('SELECT * FROM bon_planing_sin WHERE RESERVE IS NULL', (err, planResults) => {
             if (err) {
                 console.error('bon_planing_sin 데이터 조회 중 오류:', err);
                 connection.end();
                 return res.status(500).send('내부 서버 오류');
             }
-    
+
             let selectedRow = null;
-            let matchedRow = null;  // sangHaPrefix와 currentLocDigits가 일치하는 행을 저장
-            let largestRow = null;  // 조건에 부합하는 가장 큰 값을 찾기 위한 변수
-    
+
             planResults.forEach(row => {
-                const totalValueStr = String(row.TOTAL).split('.')[0];
-                const totalRightThree = totalValueStr.slice(-3);
+                const totalValueStr = String(row.TOTAL).split('.')[0]; // 소수점 제거 후 문자열로 변환
+                const totalRightThree = totalValueStr.slice(-3); // 오른쪽에서 세 자리 숫자 추출
                 const totalRightThreeNum = parseInt(totalRightThree, 10);
-                const totalValue = parseInt(totalValueStr, 10);
-    
+                const totalValue = parseInt(totalValueStr, 10); // 전체 TOTAL 값
+
                 if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
                     const sangHaPrefix = row.SANG_HA.split('-')[0];
 
-    
-                    if (currentLocDigits === sangHaPrefix) {
-                        if ((SASI === "콤바인샤시" && row.TOTAL % 1 <= 0.5) || 
-                            (SASI === "라인샤시" && row.TOTAL % 1 === 0)) {
-                            if (!matchedRow || parseFloat(row.TOTAL) > parseFloat(matchedRow.TOTAL)) {
-                                matchedRow = row;
-                            }
-                        }
-                    } else {
-                        if ((SASI === "콤바인샤시" && row.TOTAL % 1 <= 0.5) || 
-                            (SASI === "라인샤시" && row.TOTAL % 1 === 0)) {
-                            if (!largestRow || parseFloat(row.TOTAL) > parseFloat(largestRow.TOTAL)) {
-                                largestRow = row;
-                            }
+                    if (sangHaPrefix && currentLocDigits !== sangHaPrefix) {
+                        return;
+                    }
+
+                    if ((SASI === "콤바인샤시" && row.TOTAL % 1 <= 0.5) || 
+                        (SASI === "라인샤시" && row.TOTAL % 1 === 0)) {
+                        if (!selectedRow || parseFloat(row.TOTAL) > parseFloat(selectedRow.TOTAL)) {
+                            selectedRow = row;
                         }
                     }
                 }
             });
-    
-            if (matchedRow) {
-                selectedRow = matchedRow;
-            } else if (largestRow) {
-                selectedRow = largestRow;
-            }
-    
+
             if (selectedRow) {
                 assignTotalValue(selectedRow, user);
             } else {
                 req.session.assignedData = null;
                 connection.end();
-                res.redirect('/driver1');  // /driver1로 리다이렉트
+                res.render('index_배차', {
+                    user: { id: user.id, car: user.CAR, role: user.ROLE },
+                    sessionID: req.sessionID,
+                    assignedTotal: null
+                });
             }
         });
     }
-    
+
     function assignTotalValue(row, user) {
-        if (!row || !row.B_IDX) {
-            console.error('유효하지 않은 데이터: B_IDX 값이 없습니다.', row);
+        if (!row || !row.TOTAL) {
+            console.error('유효하지 않은 데이터: TOTAL 값이 없습니다.', row);
             connection.end();
-            return res.status(400).send('B_IDX value not set.');
+            return res.status(400).send('TOTAL value not set.');
         }
-    
+
         const selectedSangHa = row.SANG_HA;
-    
-        connection.query('UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?', [row.B_IDX], (err) => {
+
+        connection.query('UPDATE bon_planing_sin SET RESERVE = "Y" WHERE TOTAL = ?', [row.TOTAL], (err) => {
             if (err) {
                 console.error('RESERVE 업데이트 중 오류:', err);
                 connection.end();
                 return res.status(500).send('내부 서버 오류');
             }
-    
+
             req.session.assignedData = {
                 assignedTotal: row.TOTAL,
                 currentData: {
@@ -969,7 +943,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                     SASI: user.SASI
                 }
             };
-    
+
             connection.end();
             res.render('index_배차', {
                 user: { id: user.id, car: user.CAR, role: user.ROLE },
@@ -981,283 +955,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
     }
 });
 
-
-// MySQL 연결 설정
-const connection1 = mysql.createConnection(dbConfig1);
-const connection2 = mysql.createConnection(dbConfig2);
-
-connection1.connect(err => {
-    if (err) {
-        console.error('dbConfig1 연결 오류:', err);
-        return;
-    }
-    console.log('dbConfig1 연결 성공');
-});
-
-connection2.connect(err => {
-    if (err) {
-        console.error('dbConfig2 연결 오류:', err);
-        return;
-    }
-    console.log('dbConfig2 연결 성공');
-});
-
-
-
-// 요구사항 1과 2: 데이터 전송 API
-app.post('/api/send-data', (req, res) => {
-    const { conNo } = req.body;
-    const userId = req.session.user.id; // 현재 세션의 사용자 ID
-
-    // dbConfig1에서 bon_planing_sin 테이블에서 B_IDX 가져오기
-    const queryPlaningSin = 'SELECT B_IDX FROM bon_planing_sin WHERE CON_NO = ?';
-    connection1.query(queryPlaningSin, [conNo], (err, planingSinResult) => {
-        if (err) {
-            console.error('bon_planing_sin 조회 중 오류 발생:', err);
-            return res.status(500).json({ success: false, message: '내부 서버 오류' });
-        }
-
-        if (planingSinResult.length === 0) {
-            return res.status(404).json({ success: false, message: '데이터를 찾을 수 없습니다.' });
-        }
-
-        const B_IDX = planingSinResult[0].B_IDX;
-
-        // dbConfig1에서 bon_user 테이블에서 사용자 정보 가져오기
-        const queryUser = 'SELECT CAR, NAME, PART, CAR_ID FROM bon_user WHERE ID = ?';
-        connection1.query(queryUser, [userId], (err, userResult) => {
-            if (err) {
-                console.error('bon_user 조회 중 오류 발생:', err);
-                return res.status(500).json({ success: false, message: '내부 서버 오류' });
-            }
-
-            if (userResult.length === 0) {
-                return res.status(404).json({ success: false, message: '사용자 정보를 찾을 수 없습니다.' });
-            }
-
-            const { CAR, NAME, PART, CAR_ID } = userResult[0];
-            const currentDate = getCurrentSeoulTime2();
-
-            // dbConfig2에서 t_cust 테이블에서 C_IDX 가져오기
-            const queryCustBae = 'SELECT C_IDX FROM t_cust_bae WHERE CONVERT(CAST(C_NAME AS BINARY) USING utf8mb4) = CONVERT(CAST(? AS BINARY) USING utf8mb4) AND C_DEL = "N"';
-            connection2.query(queryCustBae, [PART], (err, custBaeResult) => {
-                if (err) {
-                    console.error('t_cust 조회 중 오류 발생:', err);
-                    return res.status(500).json({ success: false, message: '내부 서버 오류' });
-                }
-
-                if (custBaeResult.length === 0) {
-                    return res.status(404).json({ success: false, message: '고객 정보를 찾을 수 없습니다.' });
-                }
-
-                const C_IDX = custBaeResult[0].C_IDX;
-
-                // dbConfig2의 t_baecha 테이블에서 레코드가 존재하는지 확인
-                const checkBaechaExists = 'SELECT COUNT(*) AS count FROM t_baecha WHERE B_IDX = ?';
-                connection2.query(checkBaechaExists, [B_IDX], (err, existsResult) => {
-                    if (err) {
-                        console.error('t_baecha 존재 확인 중 오류 발생:', err);
-                        return res.status(500).json({ success: false, message: '내부 서버 오류' });
-                    }
-
-                    const recordExists = existsResult[0].count > 0;
-
-                    if (recordExists) {
-                        // 레코드가 존재하면 업데이트
-                        const updateBaecha = `
-                            UPDATE t_baecha
-                            SET 
-                                B_DATE = CONVERT(CAST(? AS BINARY) USING utf8mb4),
-                                B_CAR = CONVERT(CAST(? AS BINARY) USING utf8mb4),
-                                B_DRIVER = CONVERT(CAST(? AS BINARY) USING utf8mb4),
-                                B_CAR_ID = CONVERT(CAST(? AS BINARY) USING utf8mb4),
-                                C_IDX_IN = CONVERT(CAST(? AS BINARY) USING utf8mb4)
-                            WHERE B_IDX = ? AND B_DEL = "N";
-                        `;
-                        connection2.query(updateBaecha, [currentDate, CAR, NAME, CAR_ID, C_IDX, B_IDX], (err, result) => {
-                            if (err) {
-                                console.error('t_baecha 업데이트 중 오류 발생:', err);
-                                return res.status(500).json({ success: false, message: '내부 서버 오류' });
-                            }
-
-                            // tt_baecha 테이블에 데이터 삽입
-                            const insertTTBaecha = `
-                                INSERT INTO tt_baecha (B_IDX, C_IDX_BON, B_DIV_LOC, CON_NO, B_CAR_ID, DATE_INS, B_DIV_WORK)
-                                VALUES (?, '1', CONVERT(CAST('운송6팀(본선)' AS BINARY) USING utf8mb4), ?, ?, ?, 'TS');
-                            `;
-                            connection2.query(insertTTBaecha, [B_IDX, conNo, CAR_ID, currentDate], (err, result) => {
-                                if (err) {
-                                    console.error('tt_baecha 삽입 중 오류 발생:', err);
-                                    return res.status(500).json({ success: false, message: '내부 서버 오류' });
-                                }
-
-                                return res.json({ success: true, message: '데이터 업데이트 및 삽입 완료' });
-                            });
-                        });
-                    } else {
-                        // 레코드가 존재하지 않으면 아무 작업도 하지 않음
-                        return res.status(404).json({ success: false, message: '해당 B_IDX 레코드가 존재하지 않습니다.' });
-                    }
-                });
-            });
-        });
-    });
-});
-
-
-
-
-app.post('/set-return-to', (req, res) => {
-    if (req.session) {
-        req.session.returnTo = req.body.returnTo;
-        res.status(200).send({ success: true });
-    } else {
-        res.status(400).send({ success: false, message: '세션이 유효하지 않습니다.' });
-    }
-});
-
-
-
-
-// bon_log 인설트
-app.post('/api/insert-log', (req, res) => {
-    if (!req.session.user) {
-        console.log('세션에 사용자 정보가 없습니다.');
-        return res.status(401).json({ success: false, message: '로그인이 필요합니다.' });
-    }
-
-    const userId = req.session.user.id;
-    const { conNo, sangHa } = req.body;
-    const connection = createConnection(dbConfig1);
-
-
-
-    connection.query('SELECT CAR FROM bon_user WHERE ID = ?', [userId], (error, results) => {
-        if (error) {
-            console.error('사용자 조회 오류:', error);
-            connection.end();
-            return res.status(500).json({ success: false, message: 'Database query error', error });
-        }
-
-        if (results.length > 0) {
-            const carNumber = results[0].CAR;
-            const time = getCurrentSeoulTime();
-
-
-
-            connection.query('INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
-                [carNumber, conNo, sangHa, time], (insertError) => {
-                    connection.end();
-                    if (insertError) {
-                        console.error('로그 삽입 오류:', insertError);
-                        return res.status(500).json({ success: false, message: 'Insert log error', error: insertError });
-                    }
-                    res.json({ success: true });
-                });
-        } else {
-            console.error('사용자 없음: ', userId);
-            connection.end();
-            res.status(404).json({ success: false, message: 'User not found' });
-        }
-    });
-});
-
-// SANG_WORK 업데이트
-app.post('/api/update-sang-work', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).json({ success: false, message: '로그인이 필요합니다.' });
-    }
-
-    const { conNo, status } = req.body;
-    const connection = createConnection(dbConfig1);
-
-    connection.query('UPDATE bon_log SET SANG_WORK = ? WHERE CON_NO = ?', [status, conNo], (error, results) => {
-        connection.end();
-        if (error) {
-            return res.status(500).json({ success: false, message: 'Update SANG_WORK error' });
-        }
-        res.json({ success: true });
-    });
-});
-
-// HA_WORK 업데이트
-app.post('/api/update-ha-work', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).json({ success: false, message: '로그인이 필요합니다.' });
-    }
-
-    const { conNo, status } = req.body;
-    const connection = createConnection(dbConfig1);
-
-    connection.query('UPDATE bon_log SET HA_WORK = ? WHERE CON_NO = ?', [status, conNo], (error, results) => {
-        connection.end();
-        if (error) {
-            return res.status(500).json({ success: false, message: 'Update HA_WORK error' });
-        }
-        res.json({ success: true });
-    });
-});
-
-app.post('/api/delete-log', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).json({ success: false, message: '로그인이 필요합니다.' });
-    }
-
-    const { conNo } = req.body;
-    const connection = createConnection(dbConfig1);
-
-    connection.query('DELETE FROM bon_log WHERE CON_NO = ?', [conNo], (error, results) => {
-        connection.end();
-        if (error) {
-            return res.status(500).json({ success: false, message: 'Delete log error' });
-        }
-        res.json({ success: true });
-    });
-});
-
-app.post('/api/update-current-location', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).json({ success: false, message: '로그인이 필요합니다.' });
-    }
-
-    const userId = req.session.user.id;
-    const { newLocation } = req.body; // 클라이언트에서 새로운 위치 데이터 받기
-    const connection = createConnection(dbConfig1);
-
-    // bon_user 테이블에서 CAR 값 가져오기
-    connection.query('SELECT CAR FROM bon_user WHERE ID = ?', [userId], (error, results) => {
-        if (error) {
-            console.error('사용자 데이터 조회 오류:', error);
-            connection.end();
-            return res.status(500).json({ success: false, message: 'Database query error', error });
-        }
-
-        if (results.length > 0) {
-            const car = results[0].CAR;
-
-            // bon_carplayer 테이블의 CURRENT_LOCATION 업데이트
-            connection.query('UPDATE bon_carplayer SET CURRENT_LOCATION = ? WHERE CAR = ? AND OFF IS NULL', 
-            [newLocation, car], (updateError, updateResults) => {
-                connection.end();
-                if (updateError) {
-                    console.error('CURRENT_LOCATION 업데이트 오류:', updateError);
-                    return res.status(500).json({ success: false, message: 'Update CURRENT_LOCATION error', error: updateError });
-                }
-
-                res.json({ success: true, message: 'CURRENT_LOCATION 업데이트 완료' });
-            });
-        } else {
-            connection.end();
-            res.status(404).json({ success: false, message: '일치하는 사용자를 찾을 수 없습니다.' });
-        }
-    });
-});
-
-//driver4 라우터------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-
-app.get('/driver4', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
+app.get('/driver4', (req, res) => {
     if (!req.session.user) {
         return res.redirect('/');
     }
@@ -1273,6 +971,7 @@ app.get('/driver4', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
         currentData: nextData
     });
 });
+
 
 
 // '/get-current-data' 라우트 설정
@@ -1425,27 +1124,19 @@ app.post('/start-next-batch', (req, res) => {
 
 
 // 운행 종료를 눌렀을때 -------------------------------------------------------------------------------------------------------------------------------------
-function createConnection(config) {
-    return mysql.createConnection(config);
-}
-
-
-
 app.post('/end-driving', (req, res) => {
     if (!req.session.user) {
         return res.status(401).send({ success: false, message: "로그인이 필요합니다." });
     }
 
     const userId = req.session.user.id;
-    const { CON_NO } = req.body;
-
     const connection1 = createConnection(dbConfig1);
-    const connection2 = createConnection(dbConfig2);
-    const currentTime = getCurrentSeoulTime();
+    const currentTime = getCurrentSeoulTime(); // 현재 시간을 대한민국 서울 시간으로 설정
+    const { CON_NO } = req.body; // 클라이언트에서 CON_NO 값을 받아옴
 
     connection1.connect((err) => {
         if (err) {
-            console.error('dbConfig1 데이터베이스 연결 중 오류 발생:', err);
+            console.error('데이터베이스 연결 중 오류 발생:', err);
             return res.status(500).send({ success: false, message: "내부 서버 오류" });
         }
 
@@ -1461,68 +1152,30 @@ app.post('/end-driving', (req, res) => {
 
                 connection1.query('SELECT * FROM bon_carplayer WHERE CAR = ?', [userCar], (err, carResults) => {
                     if (err) {
-                        console.error('bon_carplayer 데이터 가져오는 중 오류 발생:', err);
+                        console.error('bon_carplyer 데이터 가져오는 중 오류 발생:', err);
                         connection1.end();
                         return res.status(500).send({ success: false, message: "내부 서버 오류" });
                     }
 
                     if (carResults.length > 0) {
-                        connection1.query('UPDATE bon_carplayer SET OFF = ? WHERE CAR = ? AND OFF IS NULL', [currentTime, userCar], (err) => {
+
+                        connection1.query('UPDATE bon_carplayer SET OFF = ? WHERE CAR = ?', [currentTime, userCar], (err) => {
                             if (err) {
                                 console.error('bon_carplayer 업데이트 중 오류 발생:', err);
                                 connection1.end();
                                 return res.status(500).send({ success: false, message: "내부 서버 오류" });
                             }
 
-                            // RESERVE 값 제거 작업
+                            // RESERVE 값 제거 작업 추가
                             connection1.query('UPDATE bon_planing_sin SET RESERVE = NULL WHERE CON_NO = ?', [CON_NO], (err) => {
+                                connection1.end();
+
                                 if (err) {
                                     console.error('bon_planing_sin 업데이트 중 오류 발생:', err);
-                                    connection1.end();
                                     return res.status(500).send({ success: false, message: "내부 서버 오류" });
                                 }
 
-                                // bon_planing_sin에서 B_IDX 가져오기
-                                connection1.query('SELECT B_IDX FROM bon_planing_sin WHERE CON_NO = ?', [CON_NO], (err, planingSinResult) => {
-                                    if (err) {
-                                        console.error('bon_planing_sin에서 B_IDX 가져오는 중 오류 발생:', err);
-                                        connection1.end();
-                                        return res.status(500).send({ success: false, message: "내부 서버 오류" });
-                                    }
-
-                                    if (planingSinResult.length > 0) {
-                                        const B_IDX = planingSinResult[0].B_IDX;
-
-                                        // t_baecha에서 해당 B_IDX의 특정 컬럼을 NULL로 업데이트
-                                        connection2.connect((err) => {
-                                            if (err) {
-                                                console.error('dbConfig2 데이터베이스 연결 중 오류 발생:', err);
-                                                connection1.end();
-                                                return res.status(500).send({ success: false, message: "내부 서버 오류" });
-                                            }
-
-                                            const query = `
-                                                UPDATE t_baecha 
-                                                SET B_CAR = NULL, B_DRIVER = NULL, B_CAR_ID = NULL, C_IDX_IN = NULL 
-                                                WHERE B_IDX = ? AND B_DIV_WORK = ?`;
-
-                                            connection2.query(query, [B_IDX, 'TS'], (err, result) => {
-                                                connection1.end();
-                                                connection2.end();
-
-                                                if (err) {
-                                                    console.error('t_baecha 업데이트 중 오류 발생:', err);
-                                                    return res.status(500).send({ success: false, message: "내부 서버 오류" });
-                                                }
-
-                                                return res.send({ success: true, message: "운행 종료 처리 완료" });
-                                            });
-                                        });
-                                    } else {
-                                        connection1.end();
-                                        return res.status(404).send({ success: false, message: "해당 데이터를 찾을 수 없습니다." });
-                                    }
-                                });
+                                return res.send({ success: true, message: "운행 종료 처리 완료" });
                             });
                         });
                     } else {
@@ -1538,335 +1191,3 @@ app.post('/end-driving', (req, res) => {
     });
 });
 
-
-
-// 내정보 페이지--------------------------------------------------------------------------------------------------------------------------------------------------------------------
-app.get('/my', checkRoleForCarOrManager, (req, res) => {
-    if (!req.session.user || !req.session.user.id) {
-        return res.redirect('/');
-    }
-
-    const userId = req.session.user.id;
-    const connection1 = createConnection(dbConfig1);
-
-    connection1.connect((err) => {
-        if (err) {
-            console.error('데이터베이스 연결 중 오류 발생: ', err);
-            return res.status(500).send('내부 서버 오류');
-        }
-
-        // bon_user 테이블에서 사용자 정보와 역할을 조회
-        connection1.query('SELECT ID, NAME, ROLE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
-            if (err) {
-                console.error('사용자 데이터 가져오는 중 오류 발생: ', err);
-                connection1.end();
-                return res.status(500).send('내부 서버 오류');
-            }
-
-            if (userResults.length > 0) {
-                const user = userResults[0];
-                req.session.user = {
-                    id: user.ID,
-                    name: user.NAME,
-                    role: user.ROLE // 세션에 ROLE 정보 저장
-                };
-
-                // 사용자 정보를 템플릿에 전달하고, my 페이지 렌더링
-                res.render('index_내정보', {
-                    user: req.session.user,
-                    sessionID: req.sessionID // 세션 ID를 템플릿에 전달
-                });
-            } else {
-                connection1.end();
-                return res.status(404).send('사용자를 찾을 수 없습니다');
-            }
-
-            connection1.end();
-        });
-    });
-});
-
-
-
-// 사용자 정보 가져오기 API
-app.get('/api/my-info', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).send('로그인이 필요합니다.');
-    }
-
-    const userId = req.session.user.id;
-    const query = 'SELECT NAME, PASSWORD, PHONE, CAR, CAR_ID, SASI, PART FROM bon_user WHERE ID = ?';
-    queryWithReconnect(dbConfig1, query, [userId], (error, results) => {
-        if (error) {
-            return res.status(500).send('데이터베이스 오류');
-        }
-        if (results.length === 0) {
-            return res.status(404).send('사용자를 찾을 수 없습니다.');
-        }
-        res.json(results[0]);
-    });
-});
-
-// 사용자 정보 업데이트 API
-app.post('/update-user', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).send('로그인이 필요합니다.');
-    }
-
-    const userId = req.session.user.id;
-    const { name, password, phone, car, car_id, SASI, part } = req.body;
-
-    const updateQuery = `
-        UPDATE bon_user 
-        SET NAME = ?, PASSWORD = ?, PHONE = ?, CAR = ?, CAR_ID = ?, SASI = ?, PART = ?
-        WHERE ID = ?
-    `;
-    const updateValues = [name, password, phone, car, car_id, SASI, part, userId];
-
-    queryWithReconnect(dbConfig1, updateQuery, updateValues, (error, results) => {
-        if (error) {
-            return res.status(500).send('데이터베이스 업데이트 오류');
-        }
-        res.json({ message: '정보가 업데이트되었습니다.' });
-    });
-});
-
-
-///////차량 출퇴근 페이지----------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
-
-app.get('/car', (req, res) => {
-    if (!req.session.user || !['manager'].includes(req.session.user.role)) {
-        return res.redirect('/');
-    }
-
-    queryWithReconnect(dbConfig1, 'SELECT * FROM bon_carplayer', [], (error, results) => {
-        if (error) {
-            console.error('데이터베이스 쿼리 오류:', error);
-            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
-        }
-
-        res.render('index_본선출퇴근', { data: results, user: req.session.user });
-    });
-});
-
-app.post('/delete-container', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).send('인증이 필요합니다.');
-    }
-
-    const containerIds = req.body.containerIds;
-    if (!containerIds || containerIds.length === 0) {
-        return res.status(400).send('삭제할 운행자가 지정되지 않았습니다.');
-    }
-
-    const placeholders = containerIds.map(() => '?').join(',');
-    const sqlQuery = `DELETE FROM bon_carplayer WHERE NAME IN (${placeholders})`;
-
-    queryWithReconnect(dbConfig1, sqlQuery, containerIds, (error, results) => {
-        if (error) {
-            console.error('데이터베이스 쿼리 오류:', error);
-            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
-        }
-
-        res.send({ message: `${results.affectedRows}개의 행이 삭제되었습니다.` });
-    });
-});
-
-///////차량 출퇴근 페이지----------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
-
-app.get('/car', (req, res) => {
-    if (!req.session.user || !['manager'].includes(req.session.user.role)) {
-        return res.redirect('/');
-    }
-
-    queryWithReconnect(dbConfig1, 'SELECT * FROM bon_carplayer', [], (error, results) => {
-        if (error) {
-            console.error('데이터베이스 쿼리 오류:', error);
-            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
-        }
-
-        res.render('index_본선출퇴근', { data: results, user: req.session.user });
-    });
-});
-
-app.post('/delete-container', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).send('인증이 필요합니다.');
-    }
-
-    const containerIds = req.body.containerIds;
-    if (!containerIds || containerIds.length === 0) {
-        return res.status(400).send('삭제할 운행자가 지정되지 않았습니다.');
-    }
-
-    const placeholders = containerIds.map(() => '?').join(',');
-    const sqlQuery = `DELETE FROM bon_carplayer WHERE NAME IN (${placeholders})`;
-
-    queryWithReconnect(dbConfig1, sqlQuery, containerIds, (error, results) => {
-        if (error) {
-            console.error('데이터베이스 쿼리 오류:', error);
-            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
-        }
-
-        res.send({ message: `${results.affectedRows}개의 행이 삭제되었습니다.` });
-    });
-});
-
-
-///////본선로그 페이지----------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
-
-app.get('/tslog', (req, res) => {
-    if (!req.session.user || !['manager'].includes(req.session.user.role)) {
-        return res.redirect('/');
-    }
-
-    queryWithReconnect(dbConfig1, 'SELECT * FROM bon_log', [], (error, results) => {
-        if (error) {
-            console.error('데이터베이스 쿼리 오류:', error);
-            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
-        }
-
-        res.render('index_본선로그', { data: results, user: req.session.user });
-    });
-});
-
-app.post('/delete-order', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).send('로그인이 필요합니다.');
-    }
-
-    const containerIds = req.body.containerIds;
-    if (!containerIds || containerIds.length === 0) {
-        return res.status(400).send('컨테이너 번호를 입력하세요.');
-    }
-
-    const placeholders = containerIds.map(() => '?').join(',');
-    const sqlUpdateQuery = `UPDATE bon_planing_sin SET RESERVE = NULL WHERE CON_NO IN (${placeholders})`;
-    const sqlDeleteQuery = `DELETE FROM bon_log WHERE CON_NO IN (${placeholders})`;
-
-    // bon_planing_sin 테이블 업데이트
-    queryWithReconnect(dbConfig1, sqlUpdateQuery, containerIds, (updateError, updateResults) => {
-        if (updateError) {
-            console.error('데이터베이스 업데이트 쿼리 오류:', updateError);
-            return res.status(500).send('데이터베이스 업데이트 쿼리 오류가 발생했습니다.');
-        }
-
-        // bon_log 테이블에서 삭제
-        queryWithReconnect(dbConfig1, sqlDeleteQuery, containerIds, (deleteError, deleteResults) => {
-            if (deleteError) {
-                console.error('데이터베이스 삭제 쿼리 오류:', deleteError);
-                return res.status(500).send('데이터베이스 삭제 쿼리 오류가 발생했습니다.');
-            }
-
-            res.send({ message: `${updateResults.affectedRows}개의 행이 업데이트되고, ${deleteResults.affectedRows}개의 행이 삭제되었습니다.` });
-        });
-    });
-});
-
-app.post('/delete-container2', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).send('인증이 필요합니다.');
-    }
-
-    const containerIds = req.body.containerIds;
-    if (!containerIds || containerIds.length === 0) {
-        return res.status(400).send('반입확인 컨넘버 확인.');
-    }
-
-    // 쿼리의 플레이스홀더 문자열 생성
-    const placeholders = containerIds.map(() => '?').join(',');
-    const sqlQuery = `UPDATE bon_log SET OFF_INFOMATION = '반입완료' WHERE CON_NO IN (${placeholders})`;
-
-    queryWithReconnect(dbConfig1, sqlQuery, containerIds, (error, results) => {
-        if (error) {
-            console.error('데이터베이스 쿼리 오류:', error);
-            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
-        }
-
-        res.send({ message: `${results.affectedRows}개의 행이 업데이트되었습니다.` });
-    });
-});
-
-
-///////관리자 페이지----------------------------------------------------------------------------------------------------------------------------------------------------------
-
-app.set('view engine', 'ejs');  
-app.set('views', path.join(__dirname, 'views'))  
-
-// 관리자 페이지 라우트
-app.get('/manager', (req, res) => {
-    if (!req.session.user || req.session.user.role !== 'manager') {
-        return res.redirect('/');
-    }
-    res.render('index_관리자', { user: req.session.user });
-});
-
-app.post('/api/search-user', (req, res) => {
-    const { id } = req.body;
-    queryWithReconnect(dbConfig1, 'SELECT * FROM bon_user WHERE ID = ?', [id], (error, results) => {
-        if (error) return res.status(500).send('Database query error');
-        if (results.length > 0) {
-            res.json(results[0]);
-        } else {
-            res.status(404).send('User not found');
-        }
-    });
-});
-
-app.post('/api/update-user', (req, res) => {
-    const { id, password, phone, car, carId, SASI, part, role } = req.body;
-    const updateFields = {};
-    if (password) updateFields.PASSWORD = password;
-    if (phone) updateFields.PHONE = phone;
-    if (car) updateFields.CAR = car;
-    if (carId) updateFields.CAR_ID = carId;
-    if (carId) updateFields.SASI = SASI;
-    if (part) updateFields.PART = part;
-    if (role) updateFields.ROLE = role;
-
-    const sql = 'UPDATE bon_user SET ? WHERE ID = ?';
-    queryWithReconnect(dbConfig1, sql, [updateFields, id], (error, results) => {
-        if (error) return res.status(500).send('Database update error');
-        res.send('User updated');
-    });
-});
-
-app.get('/api/unassigned-accounts', (req, res) => {
-    queryWithReconnect(dbConfig1, 'SELECT ID, CAR, PHONE FROM bon_user WHERE ROLE IS NULL OR ROLE = "차단"', [], (error, results) => {
-        if (error) return res.status(500).send('Database query error');
-        res.json(results);
-    });
-});
-
-app.get('/api/user-list', (req, res) => {
-    queryWithReconnect(dbConfig1, 'SELECT ID, PHONE, CAR, CAR_ID, SASI, PART, ROLE FROM bon_user', [], (error, results) => {
-        if (error) {
-            console.error('Database query error:', error); // 오류 로그 출력
-            return res.status(500).send('Database query error');
-        }
-        res.json(results);
-    });
-});
-
-app.post('/api/search-by-car', (req, res) => {
-    const { car } = req.body;
-    queryWithReconnect(dbConfig1, 'SELECT ID, PHONE, CAR, CAR_ID, PART, SASI, ROLE FROM bon_user WHERE CAR = ?', [car], (error, results) => {
-        if (error) {
-            console.error('Database query error:', error); // 오류 로그 출력
-            return res.status(500).send('Database query error');
-        }
-        res.json(results);
-    });
-});

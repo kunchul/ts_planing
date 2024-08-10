@@ -210,7 +210,8 @@
         const socket = io();
     
         socket.on('connect', () => {
-            socket.emit('registerSession', '<%= sessionID %>'); // 서버로 세션 ID 전달
+            // 서버로 세션 ID 전달
+            socket.emit('registerSession', '<%= sessionID %>'); // 이 부분은 서버에서 세션 ID를 제공해야 합니다.
         });
     
         socket.on('forceLogout', () => {
