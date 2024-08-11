@@ -619,22 +619,38 @@ document.getElementById('copino2').addEventListener('click', function() {
     });
 });
 
-    document.addEventListener('DOMContentLoaded', function() {
-        // SANG_HA와 SANG_HA2 요소의 텍스트 값을 가져오기
+document.getElementById('loadingComplete').addEventListener('click', function() {
+    // nextDispatchSection을 보이게 합니다.
+    document.getElementById('nextDispatchSection').style.display = 'block';
+
+    // 일정 시간 지연 후 SANG_HA와 SANG_HA2의 값을 비교합니다.
+    setTimeout(function() {
         const sangHaText = document.getElementById('SANG_HA').innerText.trim();
         const sangHa2Text = document.getElementById('SANG_HA2').innerText.trim();
+
+        console.log("SANG_HA 값:", sangHaText);
+        console.log("SANG_HA2 값:", sangHa2Text);
 
         // 두 텍스트 값이 있는지 확인하고, "-" 뒤의 글자를 비교
         if (sangHaText && sangHa2Text) {
             const sangHaSuffix = sangHaText.split('-').pop();
             const sangHa2Suffix = sangHa2Text.split('-').pop();
 
+            console.log("SANG_HA 접미사:", sangHaSuffix);
+            console.log("SANG_HA2 접미사:", sangHa2Suffix);
+
             // 두 접미사가 같으면 copino2 버튼 숨기기
             if (sangHaSuffix === sangHa2Suffix) {
+                console.log("접미사가 일치하여 copino2 버튼을 숨깁니다.");
                 document.getElementById('copino2').style.display = 'none';
+            } else {
+                console.log("접미사가 일치하지 않습니다.");
             }
+        } else {
+            console.log("SANG_HA 또는 SANG_HA2 값이 존재하지 않습니다.");
         }
-    });
+    }, 500); // 0.5초(500ms) 지연
+});
 
 
 
