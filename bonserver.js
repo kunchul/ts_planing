@@ -1,23 +1,25 @@
 const express = require('express');
 const http = require('http');
-const { Server } = require("socket.io");
+const socketIo = require('socket.io');
 const bodyParser = require('body-parser');
 const app = express();
 const server = http.createServer(app);
+const io = socketIo(server); 
+
 const mysql = require('mysql');
 const path = require('path');
 const session = require('express-session');
-const cron = require('node-cron');
-const { exec } = require('child_process');
 const moment = require('moment-timezone');
-const crypto = require('crypto');
 
-let activeSessions = {};
+
+
 
 // 대한민국 서울 시간대로 현재 시간을 설정하는 함수
 function getCurrentSeoulTime() {
     return moment().tz('Asia/Seoul').format('YYYY-MM-DD HH:mm:ss');
 }
+
+
 
 function getCurrentSeoulTime2() {
     return moment().tz('Asia/Seoul').format('YYYY-MM-DD');
@@ -35,7 +37,7 @@ app.use(session({
     }
 }));
 
-
+let activeSessions = {};
 
 // 세션 만료 시 로그아웃 처리
 app.use((req, res, next) => {
@@ -68,9 +70,13 @@ app.use((req, res, next) => {
 function startNewSession(req, res, user, connection) {
     const sessionId = req.sessionID;
 
-    if (activeSessions[sessionId]) {
-        activeSessions[sessionId].emit('forceLogout');
+    if (activeSessions[user.ID]) {
+        const oldSocketId = activeSessions[user.ID];
+        io.to(oldSocketId).emit('forceLogout');
+        delete activeSessions[user.ID]; // 이전 세션 삭제
     }
+
+    activeSessions[user.ID] = sessionId; // 새로운 세션 저장
 
     connection.query('UPDATE bon_user SET session_id = ? WHERE ID = ?', [sessionId, user.ID], (err) => {
         if (err) {
@@ -85,7 +91,7 @@ function startNewSession(req, res, user, connection) {
             role: user.ROLE
         };
 
-        // 사용자가 이전에 있던 페이지로 리다이렉트
+        // 사용자가 이전에 있던 페이지로 리디렉트
         const redirectTo = req.session.returnTo || '/LOGIN';
         delete req.session.returnTo;
 
@@ -94,13 +100,28 @@ function startNewSession(req, res, user, connection) {
     });
 }
 
-// 사용자가 특정 페이지를 방문했을 때 해당 페이지 정보를 세션에 저장
-app.use((req, res, next) => {
-    if (req.session && req.session.user) {
-        req.session.lastPage = req.originalUrl; // 사용자가 마지막으로 방문한 페이지 저장
-    }
-    next();
+io.on('connection', (socket) => {
+    socket.on('registerSession', (sessionID) => {
+        // 이미 동일한 사용자가 로그인한 세션이 있다면 해당 세션을 로그아웃 처리
+        for (const id in activeSessions) {
+            if (activeSessions[id].sessionID === sessionID) {
+                activeSessions[id].socket.emit('forceLogout');
+                delete activeSessions[id];
+            }
+        }
+
+        // 현재 소켓을 세션 ID와 연결하여 activeSessions에 저장
+        activeSessions[sessionID] = { socket: socket, sessionID: sessionID };
+
+        socket.on('disconnect', () => {
+            // 소켓이 연결 해제되면 activeSessions에서 제거
+            delete activeSessions[sessionID];
+        });
+    });
 });
+
+
+
 
 // 세션을 유지하기 위한 간단한 API 라우트
 app.get('/keep-session-alive', (req, res) => {
@@ -146,6 +167,21 @@ function checkRoleForCarOrManager(req, res, next) {
         res.redirect('/'); // 일치하지 않으면 홈 페이지로 리다이렉트
     }
 }
+
+// 세션 확인 미들웨어
+function sessionChecker(req, res, next) {
+    if (!req.session.user) {
+        return res.redirect('/LOGIN'); // 세션이 없으면 로그인 페이지로 리디렉트
+    }
+    next(); // 세션이 있으면 다음 미들웨어로 진행
+}
+
+// 세션 ID 전달 미들웨어
+function sessionIDProvider(req, res, next) {
+    res.locals.sessionID = req.sessionID;
+    next();
+}
+
 
 // 환경 변수에서 포트 번호를 읽어옴-----------------------------------------------------------------------------------------------------------------
 const PORT = process.env.PORT || 31681;
@@ -330,18 +366,15 @@ app.get('/LOGIN', (req, res) => {
 });
 
 // '/driver1' 라우트 설정-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-app.get('/driver1', checkRoleForCarOrManager,  (req, res) => {
+app.get('/driver1', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
     if (!req.session.user) {
-        // 사용자가 로그인하지 않았으면 홈페이지로 리다이렉트
         return res.redirect('/');
     }
 
-    // 로그인 후 이전 페이지 정보를 저장하기 위해 req.session.returnTo 설정
     if (!req.session.returnTo) {
         req.session.returnTo = '/driver1';
     }
 
-    // 사용자가 로그인한 경우
     const userId = req.session.user.id;
     const connection1 = createConnection(dbConfig1);
 
@@ -383,11 +416,6 @@ app.get('/driver1', checkRoleForCarOrManager,  (req, res) => {
     });
 });
 
-// moment-timezone 라이브러리를 사용하여 현재 서울 시간을 가져오는 함수
-function getCurrentSeoulTime() {
-    return moment().tz('Asia/Seoul').format('YYYY-MM-DD HH:mm:ss');
-}
-
 // bon_carplayer 차량, 출근시간, 소속 업데이트
 app.post('/start-driving', (req, res) => {
     const { userId } = req.body;
@@ -416,7 +444,7 @@ app.post('/start-driving', (req, res) => {
             const { CAR, PART, NAME } = results[0];
 
             // bon_carplayer 테이블에 인서트
-            const insertQuery = 'INSERT INTO bon_carplayer (CAR, `ON`, PART, NAME) VALUES (?, ?, ?, ?)';
+            const insertQuery = 'INSERT INTO bon_carplayer (CAR, `ON`, PART, NAME) VALUES (?, ?, ?, ?)' ;
             connection.query(insertQuery, [CAR, currentTime, PART, NAME], (insertError) => {
                 if (insertError) {
                     console.error('데이터베이스에 값을 삽입하는 중 오류 발생: ', insertError);
@@ -635,7 +663,7 @@ app.post('/start-driving-bok', (req, res) => {
 
 
 // '/driver2-1' 라우트 설정(신항)-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-app.get('/driver2-1',checkRoleForCarOrManager,  (req, res) => {
+app.get('/driver2-1', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
     if (!req.session.user) {
         // 사용자가 로그인하지 않았으면 홈페이지로 리디렉트
         return res.redirect('/');
@@ -687,7 +715,7 @@ app.get('/driver2-1',checkRoleForCarOrManager,  (req, res) => {
 });
 
 // '/driver2-2' 라우트 설정(북항)-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-app.get('/driver2-2', checkRoleForCarOrManager,  (req, res) => {
+app.get('/driver2-2', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
     if (!req.session.user) {
         // 사용자가 로그인하지 않았으면 홈페이지로 리다이렉트
         return res.redirect('/');
@@ -809,12 +837,12 @@ function updateLocation(car, location, res, connection) {
 
 
 // '/driver3' 라우트 설정-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-app.get('/driver3', checkRoleForCarOrManager,  (req, res) => {
+app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
     if (!req.session.user) {
         return res.redirect('/');
     }
 
-    req.session.returnTo = '/driver3';
+    req.session.returnTo = '/LOGIN';
 
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1);
@@ -1011,7 +1039,7 @@ app.post('/api/send-data', (req, res) => {
             const currentDate = getCurrentSeoulTime2();
 
             // dbConfig2에서 t_cust 테이블에서 C_IDX 가져오기
-            const queryCustBae = 'SELECT C_IDX FROM t_cust WHERE CONVERT(CAST(C_NAME AS BINARY) USING utf8mb4) = CONVERT(CAST(? AS BINARY) USING utf8mb4)';
+            const queryCustBae = 'SELECT C_IDX FROM t_cust_bae WHERE CONVERT(CAST(C_NAME AS BINARY) USING utf8mb4) = CONVERT(CAST(? AS BINARY) USING utf8mb4) AND C_DEL = "N"';
             connection2.query(queryCustBae, [PART], (err, custBaeResult) => {
                 if (err) {
                     console.error('t_cust 조회 중 오류 발생:', err);
@@ -1039,12 +1067,12 @@ app.post('/api/send-data', (req, res) => {
                         const updateBaecha = `
                             UPDATE t_baecha
                             SET 
-                                B_DATE = ?,
-                                B_CAR = ?,
-                                B_DRIVER = ?,
-                                B_CAR_ID = ?,
-                                C_IDX_IN = ?
-                            WHERE B_IDX = ?;
+                                B_DATE = CONVERT(CAST(? AS BINARY) USING utf8mb4),
+                                B_CAR = CONVERT(CAST(? AS BINARY) USING utf8mb4),
+                                B_DRIVER = CONVERT(CAST(? AS BINARY) USING utf8mb4),
+                                B_CAR_ID = CONVERT(CAST(? AS BINARY) USING utf8mb4),
+                                C_IDX_IN = CONVERT(CAST(? AS BINARY) USING utf8mb4)
+                            WHERE B_IDX = ? AND B_DEL = "N";
                         `;
                         connection2.query(updateBaecha, [currentDate, CAR, NAME, CAR_ID, C_IDX, B_IDX], (err, result) => {
                             if (err) {
@@ -1110,11 +1138,12 @@ app.post('/api/insert-log', (req, res) => {
             connection.end();
             return res.status(500).json({ success: false, message: 'Database query error', error });
         }
-        
 
         if (results.length > 0) {
             const carNumber = results[0].CAR;
             const time = getCurrentSeoulTime();
+
+
 
             connection.query('INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
                 [carNumber, conNo, sangHa, time], (insertError) => {
@@ -1228,7 +1257,7 @@ app.post('/api/update-current-location', (req, res) => {
 
 
 
-app.get('/driver4', (req, res) => {
+app.get('/driver4', sessionChecker, sessionIDProvider, checkRoleForCarOrManager, (req, res) => {
     if (!req.session.user) {
         return res.redirect('/');
     }
@@ -1244,6 +1273,7 @@ app.get('/driver4', (req, res) => {
         currentData: nextData
     });
 });
+
 
 // '/get-current-data' 라우트 설정
 app.get('/get-current-data', (req, res) => {
@@ -1399,9 +1429,7 @@ function createConnection(config) {
     return mysql.createConnection(config);
 }
 
-function getCurrentSeoulTime() {
-    return new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' });
-}
+
 
 app.post('/end-driving', (req, res) => {
     if (!req.session.user) {
@@ -1714,30 +1742,6 @@ app.get('/tslog', (req, res) => {
     });
 });
 
-app.post('/delete-container2', (req, res) => {
-    if (!req.session.user) {
-        return res.status(401).send('인증이 필요합니다.');
-    }
-
-    const containerIds = req.body.containerIds;
-    if (!containerIds || containerIds.length === 0) {
-        return res.status(400).send('반입확인 컨넘버 확인.');
-    }
-
-    // 쿼리의 플레이스홀더 문자열 생성
-    const placeholders = containerIds.map(() => '?').join(',');
-    const sqlQuery = `UPDATE bon_log SET OFF_INFOMATION = '반입완료' WHERE CON_NO IN (${placeholders})`;
-
-    queryWithReconnect(dbConfig1, sqlQuery, containerIds, (error, results) => {
-        if (error) {
-            console.error('데이터베이스 쿼리 오류:', error);
-            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
-        }
-
-        res.send({ message: `${results.affectedRows}개의 행이 업데이트되었습니다.` });
-    });
-});
-
 app.post('/delete-order', (req, res) => {
     if (!req.session.user) {
         return res.status(401).send('로그인이 필요합니다.');
@@ -1770,6 +1774,31 @@ app.post('/delete-order', (req, res) => {
         });
     });
 });
+
+app.post('/delete-container2', (req, res) => {
+    if (!req.session.user) {
+        return res.status(401).send('인증이 필요합니다.');
+    }
+
+    const containerIds = req.body.containerIds;
+    if (!containerIds || containerIds.length === 0) {
+        return res.status(400).send('반입확인 컨넘버 확인.');
+    }
+
+    // 쿼리의 플레이스홀더 문자열 생성
+    const placeholders = containerIds.map(() => '?').join(',');
+    const sqlQuery = `UPDATE bon_log SET OFF_INFOMATION = '반입완료' WHERE CON_NO IN (${placeholders})`;
+
+    queryWithReconnect(dbConfig1, sqlQuery, containerIds, (error, results) => {
+        if (error) {
+            console.error('데이터베이스 쿼리 오류:', error);
+            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
+        }
+
+        res.send({ message: `${results.affectedRows}개의 행이 업데이트되었습니다.` });
+    });
+});
+
 
 ///////관리자 페이지----------------------------------------------------------------------------------------------------------------------------------------------------------
 
