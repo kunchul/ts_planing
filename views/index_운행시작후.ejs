@@ -273,9 +273,7 @@
         const socket = io();
     
         socket.on('connect', () => {
-            // 서버로 세션 ID 전달
-            const sessionID = '<%= sessionID %>';
-            socket.emit('registerSession', sessionID);
+            socket.emit('registerSession', '<%= sessionID %>'); // 서버로 세션 ID 전달
         });
     
         socket.on('forceLogout', () => {

@@ -32,7 +32,7 @@
 <div id="containerModal" class="modal">
     <div class="modal-content">
         <h4>출근부 체크완료</h4>
-        <textarea id="container-input" placeholder="체크된 기사님 번호를 줄바꿈으로 구분하여 입력하세요."></textarea>
+        <textarea id="container-input" placeholder="체크된 기사님 성함을 줄바꿈으로 구분하여 입력하세요."></textarea>
     </div>
     <div class="modal-footer">
         <button onclick="deleteContainer()" class="modal-close waves-effect waves-green btn-flat">삭제</button>
@@ -82,32 +82,34 @@
 
 
 
-<section class="custom-table-container">
-    <div class="container">
-        <table id="ts" class="custom-table">
-            <tr>
-                <th style="width: 10%;">차량번호</th>
-                <th style="width: 5%;">성함</th>
-                <th style="width: 15%;">출근시각</th>
-                <th style="width: 15%;">퇴근시각</th>
-                <th style="width: 8%;">신/북항</th>
-                <th style="width: 20%;">현재운송오더</th>
-                <th style="width: 15%;">소속회사</th>
-            </tr>
-            <% data.forEach(function(row) { %>
-            <tr data-id="<%= row.id %>">
-                <td class="CAR"><%= row.CAR %></td>
-                <td class="NAME"><%= row.NAME %></td>
-                <td class="ON"><%= row.ON %></td>
-                <td class="OFF <%= row.OFF === '오류 확인' ? 'error' : '' %>"><%= row.OFF %></td>
-                <td class="LOCATION"><%= row.LOCATION %></td>
-                <td class="CURRENT_LOCATION"><%= row.CURRENT_LOCATION %></td>
-                <td class="PART"><%= row.PART %></td>
-            </tr>
-            <% }); %>
-        </table>
-    </div>
-</section>
+    <script src="/socket.io/socket.io.js"></script>
+    <section class="custom-table-container">
+        <div class="container">
+            <table id="ts" class="custom-table">
+                <tr>
+                    <th>차량번호</th>
+                    <th>성함</th>
+                    <th>출근시각</th>
+                    <th>퇴근시각</th>
+                    <th>신/북항</th>
+                    <th>현재운송오더</th>
+                    <th>소속회사</th>
+                </tr>
+                <% data.forEach(function(row) { %>
+                    <tr data-id="<%= row.id %>">
+                        <td class="CAR"><%= row.CAR %></td>
+                        <td class="NAME"><%= row.NAME %></td>
+                        <td class="ON"><%= row.ON %></td>
+                        <td class="OFF <%= row.OFF === '오류 확인' ? '.error' : '' %>"><%= row.OFF %></td>
+                        <td class="LOCATION"><%= row.LOCATION %></td>
+                        <td class="CURRENT_LOCATION"><%= row.CURRENT_LOCATION %></td>
+                        <td class="PART"><%= row.PART %></td>
+
+                    </tr>
+                <% }); %>
+            </table>
+        </div>
+    </section>
             
 
 
@@ -399,7 +401,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.9.0/slick.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/cferdinandi/smooth-scroll@15.0.0/dist/smooth-scroll.polyfills.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
-    <script src="c:\Users\ehwo2\OneDrive\바탕 화면\joweb\joweb\script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment-timezone/0.5.34/moment-timezone-with-data.min.js"></script>
     
 </body>
 </html>
@@ -408,59 +411,64 @@
 
 <!-- 스크립트 추가 -->
 <script>
+// moment-timezone 라이브러리를 사용하여 현재 서울 시간을 가져오는 함수
+function getCurrentSeoulTime() {
+    return moment().tz('Asia/Seoul').format('YYYY-MM-DD HH:mm:ss');
+}
 
-    function openModal() {
+// 모달 열기 및 닫기 함수
+function openModal() {
     document.getElementById('containerModal').style.display = 'block';
-    }
+}
 
-    function closeModal() {
+function closeModal() {
     document.getElementById('containerModal').style.display = 'none';
-    }
+}
 
-    function deleteContainer() {
-        var input = document.getElementById('container-input').value;
-        var containerIds = input.split('\n').map(id => id.trim());
-        console.log("Deleting container IDs:", containerIds); // Debugging
+// 컨테이너 삭제 함수
+function deleteContainer() {
+    var input = document.getElementById('container-input').value;
+    var containerIds = input.split('\n').map(id => id.trim());
+    console.log("Deleting container IDs:", containerIds); // Debugging
 
-        fetch('/delete-container', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ containerIds: containerIds }),
-        })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('네트워크 응답이 올바르지 않습니다');
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log('삭제 완료:', data);
-            closeModal(); // Close modal on success
-        })
-        .catch(error => {
-            console.error('삭제 중 오류 발생:', error);
-        });
-    }
-
-    // Close modal when clicking outside of it
-    window.onclick = function(event) {
-        var modal = document.getElementById('containerModal');
-        if (event.target == modal) {
-            closeModal();
+    fetch('/delete-container', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ containerIds: containerIds }),
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('네트워크 응답이 올바르지 않습니다');
         }
+        return response.json();
+    })
+    .then(data => {
+        console.log('삭제 완료:', data);
+        closeModal(); // 성공 시 모달 닫기
+    })
+    .catch(error => {
+        console.error('삭제 중 오류 발생:', error);
+    });
+}
+
+// 모달 밖을 클릭하면 모달 닫기
+window.onclick = function(event) {
+    var modal = document.getElementById('containerModal');
+    if (event.target == modal) {
+        closeModal();
     }
+}
 
-    document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function() {
     // 매 15분마다 서버에 세션 갱신 요청을 보냄
-        setInterval(() => {
-            fetch('/keep-session-alive')
-                .then(response => console.log('Session refreshed'))
-                .catch(err => console.log('Error refreshing session', err));
-        }, 15 * 60 * 1000);  // 900000 milliseconds
-        });
-
+    setInterval(() => {
+        fetch('/keep-session-alive')
+            .then(response => console.log('Session refreshed'))
+            .catch(err => console.log('Error refreshing session', err));
+    }, 15 * 60 * 1000);  // 900000 milliseconds
+});
 
 
 
