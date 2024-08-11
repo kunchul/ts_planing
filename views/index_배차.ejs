@@ -619,21 +619,22 @@ document.getElementById('copino2').addEventListener('click', function() {
     });
 });
 
-    // SANG_HA와 SANG_HA2 요소의 텍스트 값을 가져오기
-    const sangHaText = document.getElementById('SANG_HA').innerText.trim();
-    const sangHa2Text = document.getElementById('SANG_HA2').innerText.trim();
+    document.addEventListener('DOMContentLoaded', function() {
+        // SANG_HA와 SANG_HA2 요소의 텍스트 값을 가져오기
+        const sangHaText = document.getElementById('SANG_HA').innerText.trim();
+        const sangHa2Text = document.getElementById('SANG_HA2').innerText.trim();
 
-    // 두 텍스트 값이 있는지 확인하고, "-" 뒤의 글자를 비교
-    if (sangHaText && sangHa2Text) {
-        const sangHaSuffix = sangHaText.split('-').pop();
-        const sangHa2Suffix = sangHa2Text.split('-').pop();
+        // 두 텍스트 값이 있는지 확인하고, "-" 뒤의 글자를 비교
+        if (sangHaText && sangHa2Text) {
+            const sangHaSuffix = sangHaText.split('-').pop();
+            const sangHa2Suffix = sangHa2Text.split('-').pop();
 
-        // 두 접미사가 같으면 copino2 버튼 숨기기
-        if (sangHaSuffix === sangHa2Suffix) {
-            document.getElementById('copino2').style.display = 'none';
+            // 두 접미사가 같으면 copino2 버튼 숨기기
+            if (sangHaSuffix === sangHa2Suffix) {
+                document.getElementById('copino2').style.display = 'none';
+            }
         }
-    }
-});
+    });
 
 
 
