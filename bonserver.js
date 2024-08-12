@@ -1039,7 +1039,7 @@ app.post('/api/send-data', (req, res) => {
             const currentDate = getCurrentSeoulTime2();
 
             // dbConfig2에서 t_cust 테이블에서 C_IDX 가져오기
-            const queryCustBae = 'SELECT C_IDX FROM t_cust_bae WHERE CONVERT(CAST(C_NAME AS BINARY) USING utf8mb4) = CONVERT(CAST(? AS BINARY) USING utf8mb4) AND C_DEL = "N"';
+            const queryCustBae = 'SELECT C_IDX FROM t_cust_bae WHERE CONVERT(CAST(C_NAME2 AS BINARY) USING utf8mb4) = CONVERT(CAST(? AS BINARY) USING utf8mb4) AND C_DEL = "N"';
             connection2.query(queryCustBae, [PART], (err, custBaeResult) => {
                 if (err) {
                     console.error('t_cust 조회 중 오류 발생:', err);
