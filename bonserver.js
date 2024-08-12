@@ -885,7 +885,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
 
      // 이 부분이 첫배차 부분
      function processTotalValues(SASI, currentLocDigits, user) {
-        connection.query('SELECT * FROM bon_planing_sin WHERE RESERVE IS NULL', (err, planResults) => {
+        connection.query('SELECT * FROM bon_planing_sin WHERE RESERVE IS NULL AND (B_BANIP NOT IN ("HOLD", "CANCEL") OR B_BANIP IS NULL);', (err, planResults) => {
             if (err) {
                 console.error('bon_planing_sin 데이터 조회 중 오류:', err);
                 connection.end();
@@ -1324,7 +1324,6 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         }
 
         if (!range) {
-            connection.end();
             return res.status(400).json({ message: `유효하지 않은 currentTotalTrimmed 값: ${currentTotalTrimmed}` });
         }
 
@@ -1335,13 +1334,15 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         
             selectedTotal = await new Promise((resolve, reject) => {
                 connection.query(`
-                    SELECT * FROM bon_planing_sin 
+                    SELECT * 
+                    FROM bon_planing_sin 
                     WHERE CAST(SUBSTRING(TOTAL, -3) AS UNSIGNED) BETWEEN ? AND ? 
-                      AND RESERVE IS NULL
-                      AND ((? = "콤바인샤시" AND MOD(TOTAL, 1) <= 0.5)
-                           OR (? = "라인샤시" AND MOD(TOTAL, 1) = 0))
+                    AND RESERVE IS NULL
+                    AND ((? = "콤바인샤시" AND MOD(TOTAL, 1) <= 0.5)
+                        OR (? = "라인샤시" AND MOD(TOTAL, 1) = 0))
+                    AND (B_BANIP NOT IN ("HOLD", "CANCEL") OR B_BANIP IS NULL)
                     ORDER BY TOTAL DESC
-                    LIMIT 1
+                    LIMIT 1;
                 `, [min, max, SASI, SASI], (err, result) => {
                     if (err) {
                         console.error('쿼리 실행 중 오류:', err);
@@ -1360,27 +1361,29 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         }
 
         if (selectedTotal) {
-            connection.query(`UPDATE bon_planing_sin SET RESERVE = 'Y' WHERE TOTAL = ?`, [selectedTotal.TOTAL], (err) => {
-                connection.end();
-                if (err) {
-                    console.error('RESERVE 업데이트 중 오류:', err);
-                    return res.status(500).json({ success: false, message: 'RESERVE 업데이트 중 오류 발생' });
-                }
-
-                // 세션에 nextData 저장
-                req.session.nextData = selectedTotal;
-
-                res.json({ success: true, nextDispatch: selectedTotal });
+            await new Promise((resolve, reject) => {
+                connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [selectedTotal.B_IDX], (err) => {
+                    if (err) {
+                        console.error('RESERVE 업데이트 중 오류:', err);
+                        return reject(err);
+                    }
+                    resolve();
+                });
             });
+
+            // 세션에 nextData 저장
+            req.session.nextData = selectedTotal;
+
+            res.json({ success: true, nextDispatch: selectedTotal });
         } else {
-            connection.end();
             res.status(404).json({ success: false, message: '적합한 배차를 찾을 수 없습니다.' });
         }
 
     } catch (error) {
         console.error(error);
-        connection.end();
         res.status(500).json({ success: false, message: '서버 내부 오류' });
+    } finally {
+        connection.end(); // 모든 처리가 끝난 후에 연결을 종료합니다.
     }
 });
 
