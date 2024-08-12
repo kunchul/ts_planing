@@ -280,14 +280,12 @@ app.post('/LOGIN', (req, res) => {
                     startNewSession(req, res, user, connection);
                 }
             } else {
-                console.log('비밀번호가 일치하지 않습니다.');
                 connection.end();
-                return res.status(400).send('<script>alert("잘못된 비밀번호입니다."); window.history.back();</script>');
+                return res.status(400).send('<script>alert("잘못된 비밀번호입니다."); window.location.href = "/";</script>');
             }
         } else {
-            console.log('사용자가 존재하지 않습니다.');
             connection.end();
-            return res.status(400).send('<script>alert("존재하지 않는 사용자입니다."); window.history.back();</script>');
+            return res.status(400).send('<script>alert("존재하지 않는 사용자입니다."); window.location.href = "/";</script>');
         }
     });
 });
