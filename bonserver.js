@@ -1843,7 +1843,7 @@ app.post('/api/update-user', (req, res) => {
     if (phone) updateFields.PHONE = phone;
     if (car) updateFields.CAR = car;
     if (carId) updateFields.CAR_ID = carId;
-    if (carId) updateFields.SASI = SASI;
+    if (SASI) updateFields.SASI = SASI;
     if (part) updateFields.PART = part;
     if (role) updateFields.ROLE = role;
 
