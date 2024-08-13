@@ -980,7 +980,10 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
 });
 
 
-// MySQL 연결 설정
+
+
+
+// 요구사항 1과 2: 데이터 전송 API
 const connection1 = mysql.createConnection(dbConfig1);
 const connection2 = mysql.createConnection(dbConfig2);
 
@@ -1000,68 +1003,71 @@ connection2.connect(err => {
     console.log('dbConfig2 연결 성공');
 });
 
-
-
 // 요구사항 1과 2: 데이터 전송 API
 app.post('/api/send-data', (req, res) => {
     const { conNo } = req.body;
     const userId = req.session.user.id; // 현재 세션의 사용자 ID
 
-    // dbConfig1에서 bon_planing_sin 테이블에서 B_IDX 가져오기
-    const queryPlaningSin = 'SELECT B_IDX FROM bon_planing_sin WHERE CON_NO = ?';
-    connection1.query(queryPlaningSin, [conNo], (err, planingSinResult) => {
+    // 요청 시마다 새로운 연결을 생성
+    const connection1 = mysql.createConnection(dbConfig1);
+    const connection2 = mysql.createConnection(dbConfig2);
+
+    connection1.query('SELECT B_IDX FROM bon_planing_sin WHERE CON_NO = ?', [conNo], (err, planingSinResult) => {
         if (err) {
             console.error('bon_planing_sin 조회 중 오류 발생:', err);
+            connection1.end(); // 연결 해제
             return res.status(500).json({ success: false, message: '내부 서버 오류' });
         }
 
         if (planingSinResult.length === 0) {
+            connection1.end(); // 연결 해제
             return res.status(404).json({ success: false, message: '데이터를 찾을 수 없습니다.' });
         }
 
         const B_IDX = planingSinResult[0].B_IDX;
 
-        // dbConfig1에서 bon_user 테이블에서 사용자 정보 가져오기
-        const queryUser = 'SELECT CAR, NAME, PART, CAR_ID FROM bon_user WHERE ID = ?';
-        connection1.query(queryUser, [userId], (err, userResult) => {
+        connection1.query('SELECT CAR, NAME, PART, CAR_ID FROM bon_user WHERE ID = ?', [userId], (err, userResult) => {
             if (err) {
                 console.error('bon_user 조회 중 오류 발생:', err);
+                connection1.end(); // 연결 해제
                 return res.status(500).json({ success: false, message: '내부 서버 오류' });
             }
 
             if (userResult.length === 0) {
+                connection1.end(); // 연결 해제
                 return res.status(404).json({ success: false, message: '사용자 정보를 찾을 수 없습니다.' });
             }
 
             const { CAR, NAME, PART, CAR_ID } = userResult[0];
             const currentDate = getCurrentSeoulTime2();
 
-            // dbConfig2에서 t_cust 테이블에서 C_IDX 가져오기
-            const queryCustBae = 'SELECT C_IDX FROM t_cust_bae WHERE CONVERT(CAST(C_NAME2 AS BINARY) USING utf8mb4) = CONVERT(CAST(? AS BINARY) USING utf8mb4) AND C_DEL = "N"';
-            connection2.query(queryCustBae, [PART], (err, custBaeResult) => {
+            connection2.query('SELECT C_IDX FROM t_cust_bae WHERE CONVERT(CAST(C_NAME2 AS BINARY) USING utf8mb4) = CONVERT(CAST(? AS BINARY) USING utf8mb4) AND C_DEL = "N"', [PART], (err, custBaeResult) => {
                 if (err) {
                     console.error('t_cust 조회 중 오류 발생:', err);
+                    connection1.end(); // 연결 해제
+                    connection2.end(); // 연결 해제
                     return res.status(500).json({ success: false, message: '내부 서버 오류' });
                 }
 
                 if (custBaeResult.length === 0) {
+                    connection1.end(); // 연결 해제
+                    connection2.end(); // 연결 해제
                     return res.status(404).json({ success: false, message: '고객 정보를 찾을 수 없습니다.' });
                 }
 
                 const C_IDX = custBaeResult[0].C_IDX;
 
-                // dbConfig2의 t_baecha 테이블에서 레코드가 존재하는지 확인
-                const checkBaechaExists = 'SELECT COUNT(*) AS count FROM t_baecha WHERE B_IDX = ?';
-                connection2.query(checkBaechaExists, [B_IDX], (err, existsResult) => {
+                connection2.query('SELECT COUNT(*) AS count FROM t_baecha WHERE B_IDX = ?', [B_IDX], (err, existsResult) => {
                     if (err) {
                         console.error('t_baecha 존재 확인 중 오류 발생:', err);
+                        connection1.end(); // 연결 해제
+                        connection2.end(); // 연결 해제
                         return res.status(500).json({ success: false, message: '내부 서버 오류' });
                     }
 
                     const recordExists = existsResult[0].count > 0;
 
                     if (recordExists) {
-                        // 레코드가 존재하면 업데이트
                         const updateBaecha = `
                             UPDATE t_baecha
                             SET 
@@ -1075,15 +1081,18 @@ app.post('/api/send-data', (req, res) => {
                         connection2.query(updateBaecha, [currentDate, CAR, NAME, CAR_ID, C_IDX, B_IDX], (err, result) => {
                             if (err) {
                                 console.error('t_baecha 업데이트 중 오류 발생:', err);
+                                connection1.end(); // 연결 해제
+                                connection2.end(); // 연결 해제
                                 return res.status(500).json({ success: false, message: '내부 서버 오류' });
                             }
 
-                            // tt_baecha 테이블에 데이터 삽입
                             const insertTTBaecha = `
                                 INSERT INTO tt_baecha (B_IDX, C_IDX_BON, B_DIV_LOC, CON_NO, B_CAR_ID, DATE_INS, B_DIV_WORK)
                                 VALUES (?, '1', CONVERT(CAST('운송6팀(본선)' AS BINARY) USING utf8mb4), ?, ?, ?, 'TS');
                             `;
                             connection2.query(insertTTBaecha, [B_IDX, conNo, CAR_ID, currentDate], (err, result) => {
+                                connection1.end(); // 연결 해제
+                                connection2.end(); // 연결 해제
                                 if (err) {
                                     console.error('tt_baecha 삽입 중 오류 발생:', err);
                                     return res.status(500).json({ success: false, message: '내부 서버 오류' });
@@ -1093,7 +1102,8 @@ app.post('/api/send-data', (req, res) => {
                             });
                         });
                     } else {
-                        // 레코드가 존재하지 않으면 아무 작업도 하지 않음
+                        connection1.end(); // 연결 해제
+                        connection2.end(); // 연결 해제
                         return res.status(404).json({ success: false, message: '해당 B_IDX 레코드가 존재하지 않습니다.' });
                     }
                 });
