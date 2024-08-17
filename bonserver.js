@@ -1514,7 +1514,7 @@ app.post('/end-driving', (req, res) => {
 
                                             const query = `
                                                 UPDATE t_baecha 
-                                                SET B_CAR = NULL, B_DRIVER = NULL, B_CAR_ID = NULL, C_IDX_IN = NULL 
+                                                SET B_CAR = NULL, B_DRIVER = NULL, B_CAR_ID = NULL, C_IDX_IN = NULL, B_DATE = NULL 
                                                 WHERE B_IDX = ? AND B_DIV_WORK = ?`;
 
                                             connection2.query(query, [B_IDX, 'TS'], (err, result) => {
