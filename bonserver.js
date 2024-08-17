@@ -901,7 +901,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                 const totalValue = parseInt(totalValueStr, 10);
     
                 if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
-                    const sangHaPrefix = row.SANG_HA.split(' ')[0].split('-')[0];
+                    const sangHaPrefix = row.SANG_HA.split('(')[0].split('-')[0];
 
     
                     if (currentLocDigits === sangHaPrefix) {
