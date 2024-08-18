@@ -31,16 +31,30 @@
 
 <div id="containerModal" class="modal">
     <div class="modal-content">
-        <h4>출근부 체크완료</h4>
+        <h4>반입 체크완료</h4>
         <textarea id="container-input" placeholder="체크된 기사님 번호를 줄바꿈으로 구분하여 입력하세요."></textarea>
     </div>
     <div class="modal-footer">
-        <button onclick="deleteContainer()" class="modal-close waves-effect waves-green btn-flat">삭제</button>
+        <button onclick="deleteContainer()" class="modal-close waves-effect waves-green btn-flat">오더캔슬</button>
+    </div>
+</div>
+
+<div id="cancelModal" class="modal">
+    <div class="modal-content">
+        <h4>배차 취소</h4>
+        <textarea id="cancel-input" placeholder="컨테이너 번호를 입력하세요."></textarea>
+    </div>
+    <div class="modal-footer">
+        <button onclick="deleteOrder()" class="modal-close waves-effect waves-green btn-flat">배차취소</button>
     </div>
 </div>
 
 <!-- Modal Trigger -->
-<button onclick="openModal()" class="open-modal-btn">출근부 제거</button>
+<button onclick="openModal('containerModal')" class="open-modal-btn">운송오더캔슬</button>
+
+
+
+
 
 <body class="bg-black muli">
     <nav class="w-100pc flex flex-column md-flex-row md-px-10 py-5 bg-black">
@@ -77,37 +91,40 @@
 
 <!-- Title Section -->
 <section class="title-section text-center">
-    <h2 class="fs-l2">본선 실시간 차량운행 현황</h2>
+    <h2 class="fs-l2">본선 플래닝오더</h2>
 </section>
 
 
 
-<section class="custom-table-container">
-    <div class="container">
-        <table id="ts" class="custom-table">
-            <tr>
-                <th style="width: 10%;">차량번호</th>
-                <th style="width: 5%;">성함</th>
-                <th style="width: 15%;">출근시각</th>
-                <th style="width: 15%;">퇴근시각</th>
-                <th style="width: 8%;">신/북항</th>
-                <th style="width: 20%;">현재운송오더</th>
-                <th style="width: 15%;">소속회사</th>
-            </tr>
-            <% data.forEach(function(row) { %>
-            <tr data-id="<%= row.id %>">
-                <td class="CAR"><%= row.CAR %></td>
-                <td class="NAME"><%= row.NAME %></td>
-                <td class="ON"><%= row.ON %></td>
-                <td class="OFF <%= row.OFF === '오류 확인' ? 'error' : '' %>"><%= row.OFF %></td>
-                <td class="LOCATION"><%= row.LOCATION %></td>
-                <td class="CURRENT_LOCATION"><%= row.CURRENT_LOCATION %></td>
-                <td class="PART"><%= row.PART %></td>
-            </tr>
-            <% }); %>
-        </table>
-    </div>
-</section>
+    <script src="/socket.io/socket.io.js"></script>
+    <section class="custom-table-container">
+        <div class="container">
+            <table id="ts" class="custom-table">
+                <tr>
+                    <th style="width: 15%;">컨테이너번호</th>
+                    <th style="width: 20%;">구간</th>
+                    <th style="width: 5%;">규격</th>
+                    <th style="width: 5%;">온도</th>
+                    <th style="width: 5%;">CLASS</th>
+                    <th style="width: 10%;">반입모선</th>
+                    <th style="width: 20%;">접안일자</th>
+                    <th style="width: 15%;">배차배정여부</th>
+                </tr>
+                <% data.forEach(function(row) { %>
+                <tr data-id="<%= row.id %>">
+                        <td class="CON_NO"><%= row.CON_NO %></td>
+                        <td class="SANG_HA"><%= row.SANG_HA %></td>
+                        <td class="CON_KU"><%= row.CON_KU %></td>
+                        <td class="CON_TEMP"><%= row.CON_TEMP %></td>
+                        <td class="CON_CLASS"><%= row.CON_CLASS %></td>
+                        <td class="B_MOSUN"><%= row.B_MOSUN %></td>
+                        <td class="M_DATE2"><%= row.M_DATE2 %></td>
+                        <td class="RESERVE"><%= row.RESERVE %></td>
+                </tr>
+                <% }); %>
+            </table>
+        </div>
+    </section>
             
 
 
@@ -409,57 +426,85 @@
 <!-- 스크립트 추가 -->
 <script>
 
-    function openModal() {
-    document.getElementById('containerModal').style.display = 'block';
-    }
+function openModal(modalId) {
+    document.getElementById(modalId).style.display = 'block';
+}
 
-    function closeModal() {
-    document.getElementById('containerModal').style.display = 'none';
-    }
+function closeModal(modalId) {
+    document.getElementById(modalId).style.display = 'none';
+}
 
-    function deleteContainer() {
-        var input = document.getElementById('container-input').value;
-        var containerIds = input.split('\n').map(id => id.trim());
-        console.log("Deleting container IDs:", containerIds); // Debugging
+function deleteContainer() {
+    var input = document.getElementById('container-input').value;
+    var containerIds = input.split('\n').map(id => id.trim());
+    console.log("Deleting container IDs:", containerIds); // 디버깅용
 
-        fetch('/delete-container', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ containerIds: containerIds }),
-        })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('네트워크 응답이 올바르지 않습니다');
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log('삭제 완료:', data);
-            closeModal(); // Close modal on success
-        })
-        .catch(error => {
-            console.error('삭제 중 오류 발생:', error);
-        });
-    }
-
-    // Close modal when clicking outside of it
-    window.onclick = function(event) {
-        var modal = document.getElementById('containerModal');
-        if (event.target == modal) {
-            closeModal();
+    fetch('/delete-tsorder', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ containerIds: containerIds }),
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('네트워크 응답이 올바르지 않습니다');
         }
+        return response.json();
+    })
+    .then(data => {
+        console.log('삭제 완료:', data);
+        closeModal('containerModal'); // 성공 시 모달 닫기
+    })
+    .catch(error => {
+        console.error('삭제 중 오류 발생:', error);
+    });
+}
+
+// 모달 밖을 클릭하면 모달 닫기
+window.onclick = function(event) {
+    var containerModal = document.getElementById('containerModal');
+    var cancelModal = document.getElementById('cancelModal');
+    if (event.target == containerModal) {
+        closeModal('containerModal');
+    }
+    if (event.target == cancelModal) {
+        closeModal('cancelModal');
+    }
+}
+
+// 페이지가 로드된 후 실행되는 코드
+document.addEventListener('DOMContentLoaded', function() {
+    // 매 15분마다 서버에 세션 갱신 요청을 보냄
+    setInterval(() => {
+        fetch('/keep-session-alive')
+            .then(response => console.log('Session refreshed'))
+            .catch(err => console.log('Error refreshing session', err));
+    }, 15 * 60 * 1000);  // 15분(900000 밀리초)
+
+    // '반입확인여부' 데이터가 있는 행을 테이블 하단으로 이동시키는 함수
+    function moveRowsBasedOnCondition() {
+        var table = document.getElementById('ts'); // 테이블 요소 가져오기
+        var tbody = table.querySelector('tbody'); // 테이블 본문 요소 가져오기
+        var rows = Array.from(tbody.querySelectorAll('tr')); // 모든 행을 배열로 변환
+
+        // '반입확인여부' 열에 데이터가 있는 행과 없는 행을 구분
+        var rowsWithData = rows.filter(row => row.querySelector('.OFF_INFOMATION').textContent.trim() !== '');
+        var rowsWithoutData = rows.filter(row => row.querySelector('.OFF_INFOMATION').textContent.trim() === '');
+
+        // tbody를 비운다
+        tbody.innerHTML = '';
+
+        // 데이터가 없는 행을 먼저 추가
+        rowsWithoutData.forEach(row => tbody.appendChild(row));
+        // 데이터가 있는 행을 그 다음에 추가
+        rowsWithData.forEach(row => tbody.appendChild(row));
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
-    // 매 15분마다 서버에 세션 갱신 요청을 보냄
-        setInterval(() => {
-            fetch('/keep-session-alive')
-                .then(response => console.log('Session refreshed'))
-                .catch(err => console.log('Error refreshing session', err));
-        }, 15 * 60 * 1000);  // 900000 milliseconds
-        });
+    // 페이지가 로드된 후 함수를 호출하여 행 정렬
+    moveRowsBasedOnCondition();
+});
+
 
 
 

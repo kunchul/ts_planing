@@ -536,63 +536,71 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
 
 
 document.getElementById('copino').addEventListener('click', function() {
-    console.log("copino 버튼 클릭됨");
-    const conNo = document.getElementById('CON_NO').innerText.trim();
+    if (confirm("전송하시겠습니까?")) {  // 확인창을 표시
+        console.log("copino 버튼 클릭됨");
+        const conNo = document.getElementById('CON_NO').innerText.trim();
 
-    if (!conNo) {
-        console.error('CON_NO 값이 설정되지 않았습니다.');
-        alert('CON_NO 값이 설정되지 않았습니다.');
-        return;
-    }
-
-    fetch('/api/send-data', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ conNo: conNo })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            alert('전송요청이 완료되었습니다. 전송 확인 후 출발하세요.');
-        } else {
-            alert('데이터 전송 실패: ' + data.message);
+        if (!conNo) {
+            console.error('CON_NO 값이 설정되지 않았습니다.');
+            alert('CON_NO 값이 설정되지 않았습니다.');
+            return;
         }
-    })
-    .catch(error => {
-        console.error('데이터 전송 중 오류 발생:', error);
-    });
+
+        fetch('/api/send-data', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ conNo: conNo })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('전송요청이 완료되었습니다. 전송 확인 후 출발하세요.');
+            } else {
+                alert('데이터 전송 실패: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('데이터 전송 중 오류 발생:', error);
+        });
+    } else {
+        console.log("전송 요청이 취소되었습니다.");
+    }
 });
 
 document.getElementById('copino2').addEventListener('click', function() {
-    console.log("copino2 버튼 클릭됨");
-    const conNo2 = document.getElementById('CON_NO2').innerText.trim();
+    if (confirm("전송하시겠습니까?")) {  // 확인창을 표시
+        console.log("copino2 버튼 클릭됨");
+        const conNo2 = document.getElementById('CON_NO2').innerText.trim();
 
-    if (!conNo2) {
-        console.error('CON_NO2 값이 설정되지 않았습니다.');
-        alert('CON_NO2 값이 설정되지 않았습니다.');
-        return;
-    }
-
-    fetch('/api/send-data', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ conNo: conNo2 })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            alert('전송요청이 완료되었습니다. 전송 확인 후 출발하세요.');
-        } else {
-            alert('데이터 전송 실패: ' + data.message);
+        if (!conNo2) {
+            console.error('CON_NO2 값이 설정되지 않았습니다.');
+            alert('CON_NO2 값이 설정되지 않았습니다.');
+            return;
         }
-    })
-    .catch(error => {
-        console.error('데이터 전송 중 오류 발생:', error);
-    });
+
+        fetch('/api/send-data', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ conNo: conNo2 })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('전송요청이 완료되었습니다. 전송 확인 후 출발하세요.');
+            } else {
+                alert('데이터 전송 실패: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('데이터 전송 중 오류 발생:', error);
+        });
+    } else {
+        console.log("전송 요청이 취소되었습니다.");
+    }
 });
 
 

@@ -83,7 +83,7 @@
                     <a href="manager" class="nav-link">관리자페이지</a>
                 <% } %>
                 <% if (user.role === 'manager') { %>
-                    <a href="order" class="nav-link">오더조회</a>
+                    <a href="tsorder" class="nav-link">오더조회</a>
                 <% } %>
                 <a href="/" class="nav-link">로그아웃</a>
             </div>
@@ -106,7 +106,6 @@
                 <th>배차시간</th>
                 <th>상차여부</th>
                 <th>하차여부</th>
-                <th>반입확인여부</th>
             </tr>
         </thead>
         <tbody>
@@ -118,7 +117,6 @@
                     <td class="TIME <%= row.TIME === '오류 확인' ? 'error' : '' %>"><%= row.TIME %></td>
                     <td class="SANG_WORK"><%= row.SANG_WORK %></td>
                     <td class="HA_WORK"><%= row.HA_WORK %></td>
-                    <td class="OFF_INFOMATION"><%= row.OFF_INFOMATION %></td>
                 </tr>
             <% }); %>
         </tbody></table>
