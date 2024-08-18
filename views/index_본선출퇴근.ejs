@@ -400,6 +400,22 @@
     <script src="https://cdn.jsdelivr.net/gh/cferdinandi/smooth-scroll@15.0.0/dist/smooth-scroll.polyfills.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="c:\Users\ehwo2\OneDrive\바탕 화면\joweb\joweb\script.js"></script>
+    <script>
+        const socket = io();
+    
+        socket.on('connect', () => {
+            // 서버로 세션 ID 전달
+            const sessionID = '<%= sessionID %>';
+            socket.emit('registerSession', sessionID);
+        });
+
+        socket.on('forceLogout', () => {
+            alert('다른 PC에서 로그인되었습니다. 메인화면으로 이동합니다.');
+            window.location.href = '/';
+        });
+    </script>
+
+
     
 </body>
 </html>

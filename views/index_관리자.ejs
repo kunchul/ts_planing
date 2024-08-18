@@ -194,6 +194,14 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.9.0/slick.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/cferdinandi/smooth-scroll@15.0.0/dist/smooth-scroll.polyfills.min.js"></script>
     <script src="assets/js/script.js"></script>
+    <script>
+        socket.on('connect', () => {
+            // 서버로 세션 ID 전달
+            const sessionID = '<%= sessionID %>';
+            socket.emit('registerSession', sessionID);
+        });
+    </script>
+
     <style>
 
     /* 기본 스타일 */

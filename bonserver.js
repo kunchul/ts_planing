@@ -10,6 +10,7 @@ const mysql = require('mysql');
 const path = require('path');
 const session = require('express-session');
 const moment = require('moment-timezone');
+const { v4: uuidv4 } = require('uuid');
 
 
 
@@ -25,36 +26,77 @@ function getCurrentSeoulTime2() {
     return moment().tz('Asia/Seoul').format('YYYY-MM-DD');
 }
 
-// 세션 미들웨어 설정
 app.use(session({
-    secret: 'your_secret_key', // 비밀 키는 보안상 강력한 값을 사용해야 합니다.
-    resave: false, // 세션을 항상 저장할지 여부
-    saveUninitialized: false, // 초기화되지 않은 세션도 저장할지 여부
+    secret: 'your_secret_key',
+    resave: false,
+    saveUninitialized: false,
     cookie: {
-        secure: false, // HTTPS 사용 시 true로 설정
+        secure: false,
         httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000 // 쿠키의 만료 시간 설정 (1일)
+        maxAge: 24 * 60 * 60 * 1000,
+        sameSite: 'Lax'
     }
 }));
-
 let activeSessions = {};
 
-// 세션 만료 시 로그아웃 처리
+
+
+// 새로운 세션 시작 함수
+function startNewSession(req, res, user, connection) {
+    const sessionId = req.sessionID;
+
+    // 동일 사용자 ID에 대한 기존 세션을 모두 무효화 (같은 세션 ID를 가진 다른 사용자의 세션 무효화)
+    connection.query('UPDATE bon_user SET session_id = NULL WHERE ID = ? AND session_id != ?', [user.ID, sessionId], (err) => {
+        if (err) {
+            console.error('Error clearing old sessions:', err);
+            connection.end();
+            return res.status(500).send('Internal Server Error');
+        }
+
+        // 새로운 세션 ID를 DB에 저장
+        connection.query('UPDATE bon_user SET session_id = ? WHERE ID = ?', [sessionId, user.ID], (err) => {
+            if (err) {
+                console.error('Error updating user session in database:', err);
+                connection.end();
+                return res.status(500).send('Internal Server Error');
+            }
+
+            req.session.user = {
+                id: user.ID,
+                name: user.NAME,
+                role: user.ROLE,
+                car: user.CAR
+            };
+
+            connection.end();
+            res.redirect('/LOGIN');  // 로그인 후 이동할 페이지
+        });
+    });
+}
+
+// 세션 확인 미들웨어 (로그인 중인 세션을 검증하고 다른 세션을 무효화)
 app.use((req, res, next) => {
     if (req.session && req.session.user) {
-        const connection = createConnection(dbConfig1);
-        connection.query('SELECT session_id FROM bon_user WHERE ID = ?', [req.session.user.id], (err, results) => {
+        const connection = mysql.createConnection(dbConfig1);
+        const currentUserId = req.session.user.id;
+        const currentSessionId = req.sessionID;
+
+        connection.query('SELECT session_id FROM bon_user WHERE ID = ?', [currentUserId], (err, results) => {
             if (err) {
-                console.error(`Error fetching session_id: ${err}`);
-                return next();
+                console.error('Error checking session ID from database:', err);
+                connection.end();
+                return res.status(500).send('Internal Server Error');
             }
-            if (results.length > 0 && results[0].session_id !== req.sessionID) {
+
+            const storedSessionId = results.length > 0 ? results[0].session_id : null;
+
+            if (storedSessionId && storedSessionId !== currentSessionId) {
                 req.session.destroy((err) => {
                     if (err) {
-                        console.error('Error destroying session: ', err);
+                        console.error('Error destroying session:', err);
                     }
                     connection.end();
-                    res.redirect('/'); // 세션 만료 시 리다이렉트
+                    res.redirect('/');  // 세션 무효화 시 리디렉션
                 });
             } else {
                 connection.end();
@@ -66,39 +108,6 @@ app.use((req, res, next) => {
     }
 });
 
-// 새로운 세션 시작 함수
-function startNewSession(req, res, user, connection) {
-    const sessionId = req.sessionID;
-
-    if (activeSessions[user.ID]) {
-        const oldSocketId = activeSessions[user.ID];
-        io.to(oldSocketId).emit('forceLogout');
-        delete activeSessions[user.ID]; // 이전 세션 삭제
-    }
-
-    activeSessions[user.ID] = sessionId; // 새로운 세션 저장
-
-    connection.query('UPDATE bon_user SET session_id = ? WHERE ID = ?', [sessionId, user.ID], (err) => {
-        if (err) {
-            console.error(`Error updating user session: ${err}`);
-            connection.end();
-            return res.status(500).send('Internal Server Error');
-        }
-
-        req.session.user = {
-            id: user.ID,
-            name: user.NAME,
-            role: user.ROLE
-        };
-
-        // 사용자가 이전에 있던 페이지로 리디렉트
-        const redirectTo = req.session.returnTo || '/LOGIN';
-        delete req.session.returnTo;
-
-        connection.end();
-        res.redirect(redirectTo);
-    });
-}
 
 io.on('connection', (socket) => {
     socket.on('registerSession', (sessionID) => {
@@ -170,11 +179,38 @@ function checkRoleForCarOrManager(req, res, next) {
 
 // 세션 확인 미들웨어
 function sessionChecker(req, res, next) {
-    if (!req.session.user) {
-        return res.redirect('/LOGIN'); // 세션이 없으면 로그인 페이지로 리디렉트
+    if (req.session.user) {
+        const connection = createConnection(dbConfig1);
+
+        connection.query('SELECT session_id FROM bon_user WHERE ID = ?', [req.session.user.id], (err, results) => {
+            if (err) {
+                console.error('Error checking session ID from database:', err);
+                connection.end();
+                return res.status(500).send('Internal Server Error');
+            }
+
+            const storedSessionId = results.length > 0 ? results[0].session_id : null;
+
+            // 세션 ID가 일치하지 않으면 현재 세션 무효화
+            if (storedSessionId && storedSessionId !== req.sessionID) {
+                req.session.destroy((err) => {
+                    if (err) {
+                        console.error('Error destroying session:', err);
+                    }
+                    connection.end();
+                    res.redirect('/');  // 세션 무효화 시 리디렉션할 페이지
+                });
+            } else {
+                connection.end();
+                next();
+            }
+        });
+    } else {
+        next();
     }
-    next(); // 세션이 있으면 다음 미들웨어로 진행
 }
+
+app.use(sessionChecker);
 
 // 세션 ID 전달 미들웨어
 function sessionIDProvider(req, res, next) {
@@ -252,11 +288,11 @@ app.post('/signup', (req, res) => {
 // 로그인 및 세션 확인 라우트------------------------------------------------------------------------------------------------------------------------------------
 app.post('/LOGIN', (req, res) => {
     const { username, password } = req.body;
-    const connection = createConnection(dbConfig1);
+    const connection = mysql.createConnection(dbConfig1);
 
     connection.query('SELECT * FROM bon_user WHERE ID = ?', [username], (err, results) => {
         if (err) {
-            console.error(`Error fetching user data: ${err}`);
+            console.error('Error fetching user data:', err);
             connection.end();
             return res.status(500).send('Internal Server Error');
         }
@@ -265,27 +301,45 @@ app.post('/LOGIN', (req, res) => {
             const user = results[0];
 
             if (password === user.PASSWORD) {
-                if (user.session_id && user.session_id.trim() !== '') {
-                    return res.status(200).send(`<script>if(confirm("로그인하시면 다른 PC로그인은 종료됩니다.")) { window.location.href = "/confirm-login?username=${username}&password=${password}"; } else { window.history.back(); }</script>`);
-                } else {
+                req.session.regenerate((err) => {  // 새로운 세션 생성
+                    if (err) {
+                        console.error('Error regenerating session:', err);
+                        connection.end();
+                        return res.status(500).send('Internal Server Error');
+                    }
+
+                    // 사용자 정보를 세션에 저장
                     req.session.user = {
                         id: user.ID,
                         name: user.NAME,
-                        car: user.CAR,  
                         role: user.ROLE
                     };
 
-                    console.log('세션에 저장된 사용자 정보:', req.session.user);
+                    // 쿠키를 설정할 때 사용자 ID를 사용하여 저장
+                    res.cookie('user_info', JSON.stringify({
+                        id: user.ID,
+                        name: user.NAME
+                    }), { maxAge: 24 * 60 * 60 * 1000, httpOnly: true });
 
-                    startNewSession(req, res, user, connection);
-                }
+                    // 새로운 세션 ID를 데이터베이스에 저장
+                    connection.query('UPDATE bon_user SET session_id = ? WHERE ID = ?', [req.sessionID, username], (err) => {
+                        if (err) {
+                            console.error('Error updating session ID:', err);
+                            connection.end();
+                            return res.status(500).send('Internal Server Error');
+                        }
+
+                        connection.end();
+                        res.redirect('/LOGIN');  // 로그인 후 이동할 페이지
+                    });
+                });
             } else {
                 connection.end();
-                return res.status(400).send('<script>alert("잘못된 비밀번호입니다."); window.location.href = "/";</script>');
+                res.status(400).send('<script>alert("잘못된 비밀번호입니다."); window.location.href = "/";</script>');
             }
         } else {
             connection.end();
-            return res.status(400).send('<script>alert("존재하지 않는 사용자입니다."); window.location.href = "/";</script>');
+            res.status(400).send('<script>alert("존재하지 않는 사용자입니다."); window.location.href = "/";</script>');
         }
     });
 });
@@ -334,32 +388,42 @@ app.get('/LOGIN', (req, res) => {
 
     const userId = req.session.user.id;
     const connection1 = createConnection(dbConfig1);
-    connection1.connect();
 
-    connection1.query('SELECT NAME, CAR, ROLE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
+    connection1.connect((err) => {
         if (err) {
-            console.error('사용자 데이터 가져오는 중 오류 발생: ', err);
-            connection1.end();
+            console.error('데이터베이스 연결 오류: ', err);
             return res.status(500).send('내부 서버 오류');
         }
 
-        if (userResults.length > 0) {
-            const user = userResults[0];
-            req.session.user = {
-                id: userId,
-                name: user.NAME,
-                car: user.CAR,
-                role: user.ROLE
-            };
+        connection1.query('SELECT NAME, CAR, ROLE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
+            if (err) {
+                console.error('사용자 데이터 가져오는 중 오류 발생: ', err);
+                connection1.end();
+                return res.status(500).send('내부 서버 오류');
+            }
 
-            res.render('index_로그인후', {
-                user: req.session.user,
-                sessionID: req.sessionID
-            });
-        } else {
-            connection1.end();
-            return res.status(404).send('사용자를 찾을 수 없습니다');
-        }
+            if (userResults.length > 0) {
+                const user = userResults[0];
+                req.session.user = {
+                    id: userId,
+                    name: user.NAME,
+                    car: user.CAR,
+                    role: user.ROLE
+                };
+
+                res.render('index_로그인후', {
+                    user: req.session.user,
+                    sessionID: req.sessionID
+                });
+
+                // 템플릿 렌더링 후 연결 종료
+                connection1.end();
+
+            } else {
+                connection1.end();
+                return res.status(404).send('사용자를 찾을 수 없습니다');
+            }
+        });
     });
 });
 
@@ -1661,6 +1725,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 app.get('/car', (req, res) => {
+    // 사용자 세션이 없거나, 사용자의 역할이 'manager'가 아니면 리디렉션
     if (!req.session.user || !['manager'].includes(req.session.user.role)) {
         return res.redirect('/');
     }
@@ -1679,7 +1744,12 @@ app.get('/car', (req, res) => {
             return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
         }
 
-        res.render('index_본선출퇴근', { data: results, user: req.session.user });
+        // 세션 ID와 함께 데이터 및 사용자 정보를 템플릿에 전달
+        res.render('index_본선출퇴근', { 
+            data: results, 
+            user: req.session.user,
+            sessionID: req.sessionID  // 세션 ID 전달
+        });
     });
 });
 
@@ -1758,6 +1828,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 app.get('/tslog', (req, res) => {
+    // 사용자가 로그인하지 않았거나, 사용자의 역할이 'manager'가 아니라면 리디렉션
     if (!req.session.user || !['manager'].includes(req.session.user.role)) {
         return res.redirect('/');
     }
@@ -1774,7 +1845,12 @@ app.get('/tslog', (req, res) => {
             return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
         }
 
-        res.render('index_본선로그', { data: results, user: req.session.user });
+        // 세션 ID와 함께 데이터 및 사용자 정보를 템플릿에 전달
+        res.render('index_본선로그', { 
+            data: results, 
+            user: req.session.user,
+            sessionID: req.sessionID  // 세션 ID 전달
+        });
     });
 });
 
@@ -1889,6 +1965,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 app.get('/tsorder', (req, res) => {
+    // 사용자 세션이 없거나, 사용자의 역할이 'manager'가 아니면 리디렉션
     if (!req.session.user || !['manager'].includes(req.session.user.role)) {
         return res.redirect('/');
     }
@@ -1907,7 +1984,12 @@ app.get('/tsorder', (req, res) => {
             return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
         }
 
-        res.render('index_본선플래닝오더', { data: results, user: req.session.user });
+        // 세션 ID와 함께 데이터 및 사용자 정보를 템플릿에 전달
+        res.render('index_본선플래닝오더', { 
+            data: results, 
+            user: req.session.user,
+            sessionID: req.sessionID  // 세션 ID 전달
+        });
     });
 });
 
@@ -1995,7 +2077,16 @@ app.get('/manager', (req, res) => {
     if (!req.session.user || req.session.user.role !== 'manager') {
         return res.redirect('/');
     }
-    res.render('index_관리자', { user: req.session.user });
+
+    // 만약 results 변수가 필요한 경우, 빈 배열을 기본값으로 설정하거나,
+    // 실제 데이터베이스 쿼리 결과로 이 부분을 대체할 수 있습니다.
+    const results = [];  // 빈 배열 또는 기본값
+
+    res.render('index_관리자', { 
+        data: results, 
+        user: req.session.user,
+        sessionID: req.sessionID 
+    });
 });
 
 app.post('/api/search-user', (req, res) => {
