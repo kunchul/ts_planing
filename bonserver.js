@@ -1197,12 +1197,23 @@ app.post('/api/update-ha-work', (req, res) => {
     const { conNo, status } = req.body;
     const connection = createConnection(dbConfig1);
 
+    // bon_log 테이블의 HA_WORK 업데이트
     connection.query('UPDATE bon_log SET HA_WORK = ? WHERE CON_NO = ?', [status, conNo], (error, results) => {
-        connection.end();
         if (error) {
-            return res.status(500).json({ success: false, message: 'Update HA_WORK error' });
+            connection.end();
+            return res.status(500).json({ success: false, message: 'HA_WORK 업데이트 오류' });
         }
-        res.json({ success: true });
+
+        // bon_planing_sin 테이블에서 CON_NO에 해당하는 행 삭제
+        connection.query('DELETE FROM bon_planing_sin WHERE CON_NO = ?', [conNo], (deleteError, deleteResults) => {
+            connection.end(); // 쿼리 실행 후 연결 종료
+
+            if (deleteError) {
+                return res.status(500).json({ success: false, message: 'bon_planing_sin 삭제 오류' });
+            }
+
+            res.json({ success: true, message: '업데이트 및 삭제 완료' });
+        });
     });
 });
 
@@ -1654,7 +1665,15 @@ app.get('/car', (req, res) => {
         return res.redirect('/');
     }
 
-    queryWithReconnect(dbConfig1, 'SELECT * FROM bon_carplayer', [], (error, results) => {
+    const query = `
+        SELECT * 
+        FROM bon_carplayer 
+        ORDER BY 
+            \`OFF\` IS NOT NULL, 
+            \`ON\` ASC           
+    `;
+
+    queryWithReconnect(dbConfig1, query, [], (error, results) => {
         if (error) {
             console.error('데이터베이스 쿼리 오류:', error);
             return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
@@ -1743,7 +1762,13 @@ app.get('/tslog', (req, res) => {
         return res.redirect('/');
     }
 
-    queryWithReconnect(dbConfig1, 'SELECT * FROM bon_log', [], (error, results) => {
+    const query = `
+        SELECT * 
+        FROM bon_log 
+        ORDER BY TIME ASC 
+    `;
+
+    queryWithReconnect(dbConfig1, query, [], (error, results) => {
         if (error) {
             console.error('데이터베이스 쿼리 오류:', error);
             return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
@@ -1766,6 +1791,7 @@ app.post('/delete-order', (req, res) => {
     const placeholders = containerIds.map(() => '?').join(',');
     const sqlUpdateQuery = `UPDATE bon_planing_sin SET RESERVE = NULL WHERE CON_NO IN (${placeholders})`;
     const sqlDeleteQuery = `DELETE FROM bon_log WHERE CON_NO IN (${placeholders})`;
+    const sqlSelectBIdxQuery = `SELECT B_IDX FROM bon_planing_sin WHERE CON_NO IN (${placeholders})`;
 
     // bon_planing_sin 테이블 업데이트
     queryWithReconnect(dbConfig1, sqlUpdateQuery, containerIds, (updateError, updateResults) => {
@@ -1781,7 +1807,41 @@ app.post('/delete-order', (req, res) => {
                 return res.status(500).send('데이터베이스 삭제 쿼리 오류가 발생했습니다.');
             }
 
-            res.send({ message: `${updateResults.affectedRows}개의 행이 업데이트되고, ${deleteResults.affectedRows}개의 행이 삭제되었습니다.` });
+            // B_IDX 값 조회
+            queryWithReconnect(dbConfig1, sqlSelectBIdxQuery, containerIds, (selectError, selectResults) => {
+                if (selectError) {
+                    console.error('데이터베이스 조회 쿼리 오류:', selectError);
+                    return res.status(500).send('데이터베이스 조회 쿼리 오류가 발생했습니다.');
+                }
+
+                if (selectResults.length > 0) {
+                    const bIdxValues = selectResults.map(row => row.B_IDX);
+                    const bIdxPlaceholders = bIdxValues.map(() => '?').join(',');
+
+                    const sqlUpdateTbaechaQuery = `
+                        UPDATE t_baecha 
+                        SET B_DATE = NULL, B_CAR = NULL, B_DRIVER = NULL, B_CAR_ID = NULL, C_IDX_IN = NULL 
+                        WHERE B_IDX IN (${bIdxPlaceholders}) AND B_DEL != 'Y'
+                    `;
+
+                    // t_baecha 테이블 업데이트
+                    queryWithReconnect(dbConfig2, sqlUpdateTbaechaQuery, bIdxValues, (updateTbaechaError, updateTbaechaResults) => {
+                        if (updateTbaechaError) {
+                            console.error('t_baecha 테이블 업데이트 중 오류:', updateTbaechaError);
+                            return res.status(500).send('t_baecha 테이블 업데이트 중 오류가 발생했습니다.');
+                        }
+
+                        res.send({
+                            message: `${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되고, ${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었으며, ${updateTbaechaResults.affectedRows}개의 행이 t_baecha에서 업데이트되었습니다.`
+                        });
+                    });
+                } else {
+                    // B_IDX가 없는 경우에도 성공 메시지를 반환
+                    res.send({
+                        message: `${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되고, ${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었습니다.`
+                    });
+                }
+            });
         });
     });
 });
@@ -1793,23 +1853,137 @@ app.post('/delete-container2', (req, res) => {
 
     const containerIds = req.body.containerIds;
     if (!containerIds || containerIds.length === 0) {
-        return res.status(400).send('반입확인 컨넘버 확인.');
+        return res.status(400).send('삭제할 컨테이너 번호를 확인하세요.');
     }
 
     // 쿼리의 플레이스홀더 문자열 생성
     const placeholders = containerIds.map(() => '?').join(',');
-    const sqlQuery = `UPDATE bon_log SET OFF_INFOMATION = '반입완료' WHERE CON_NO IN (${placeholders})`;
 
-    queryWithReconnect(dbConfig1, sqlQuery, containerIds, (error, results) => {
+    const sqlDeleteLog = `DELETE FROM bon_log WHERE CON_NO IN (${placeholders})`;
+    const sqlDeletePlanning = `DELETE FROM bon_planing_sin WHERE CON_NO IN (${placeholders})`;
+
+    // 첫 번째 쿼리: bon_log 테이블에서 삭제
+    queryWithReconnect(dbConfig1, sqlDeleteLog, containerIds, (error, results) => {
         if (error) {
             console.error('데이터베이스 쿼리 오류:', error);
             return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
         }
 
-        res.send({ message: `${results.affectedRows}개의 행이 업데이트되었습니다.` });
+        // 두 번째 쿼리: bon_planing_sin 테이블에서 삭제
+        queryWithReconnect(dbConfig1, sqlDeletePlanning, containerIds, (deleteError, deleteResults) => {
+            if (deleteError) {
+                console.error('데이터베이스 쿼리 오류:', deleteError);
+                return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
+            }
+
+            res.send({ message: `${results.affectedRows}개의 행이 본선로그에서 삭제되었고, ${deleteResults.affectedRows}개의 행이 플래닝페이지에서 삭제되었습니다.` });
+        });
     });
 });
 
+
+
+// 본선오더 페이지----------------------------------------------------------------------------
+
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
+app.get('/tsorder', (req, res) => {
+    if (!req.session.user || !['manager'].includes(req.session.user.role)) {
+        return res.redirect('/');
+    }
+
+    const query = `
+        SELECT * 
+        FROM bon_planing_sin 
+        ORDER BY 
+            CASE WHEN RESERVE IS NOT NULL THEN 0 ELSE 1 END, 
+            M_DATE2 ASC
+    `;
+
+    queryWithReconnect(dbConfig1, query, [], (error, results) => {
+        if (error) {
+            console.error('데이터베이스 쿼리 오류:', error);
+            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
+        }
+
+        res.render('index_본선플래닝오더', { data: results, user: req.session.user });
+    });
+});
+
+app.post('/delete-tsorder', (req, res) => {
+    if (!req.session.user) {
+        return res.status(401).send('인증이 필요합니다.');
+    }
+
+    const containerIds = req.body.containerIds;
+    if (!containerIds || containerIds.length === 0) {
+        return res.status(400).send('삭제할 컨테이너 번호를 확인하세요.');
+    }
+
+    // 쿼리의 플레이스홀더 문자열 생성
+    const placeholders = containerIds.map(() => '?').join(',');
+
+    // 1단계: bon_planing_sin 테이블에서 B_IDX와 CON_NO 추출
+    const sqlSelectQuery = `SELECT B_IDX, CON_NO FROM bon_planing_sin WHERE CON_NO IN (${placeholders})`;
+
+    queryWithReconnect(dbConfig1, sqlSelectQuery, containerIds, (selectError, selectResults) => {
+        if (selectError) {
+            console.error('데이터베이스 조회 쿼리 오류:', selectError);
+            return res.status(500).send('데이터베이스 조회 쿼리 오류가 발생했습니다.');
+        }
+
+        if (selectResults.length === 0) {
+            return res.status(404).send('해당 조건에 맞는 데이터가 없습니다.');
+        }
+
+        // 추출된 B_IDX와 CON_NO 값들
+        const bIdxValues = selectResults.map(row => row.B_IDX);
+        const conNoValues = selectResults.map(row => row.CON_NO);
+
+        const bIdxPlaceholders = bIdxValues.map(() => '?').join(',');
+
+        // 2단계: t_baecha 테이블에서 B_IDX가 일치하고 B_DATE가 NULL인 열의 B_DEL을 'Y'로 업데이트
+        const sqlUpdateBaecha = `
+            UPDATE t_baecha 
+            SET B_DEL = 'Y' 
+            WHERE B_IDX IN (${bIdxPlaceholders}) 
+            AND B_DATE IS NULL
+        `;
+
+        queryWithReconnect(dbConfig2, sqlUpdateBaecha, bIdxValues, (updateBaechaError, updateBaechaResults) => {
+            if (updateBaechaError) {
+                console.error('t_baecha 테이블 업데이트 쿼리 오류:', updateBaechaError);
+                return res.status(500).send('t_baecha 테이블 업데이트 중 오류가 발생했습니다.');
+            }
+
+            // 3단계: bon_planing_sin 테이블에서 B_IDX와 일치하는 행 삭제
+            const sqlDeletePlanning = `DELETE FROM bon_planing_sin WHERE B_IDX IN (${bIdxPlaceholders})`;
+
+            queryWithReconnect(dbConfig1, sqlDeletePlanning, bIdxValues, (deletePlanningError, deletePlanningResults) => {
+                if (deletePlanningError) {
+                    console.error('bon_planing_sin 테이블 삭제 쿼리 오류:', deletePlanningError);
+                    return res.status(500).send('bon_planing_sin 테이블 삭제 중 오류가 발생했습니다.');
+                }
+
+                // 4단계: 2단계에서 업데이트된 CON_NO를 이용해 bon_log 테이블에서 일치하는 행 삭제
+                const conNoPlaceholders = conNoValues.map(() => '?').join(',');
+                const sqlDeleteLog = `DELETE FROM bon_log WHERE CON_NO IN (${conNoPlaceholders})`;
+
+                queryWithReconnect(dbConfig1, sqlDeleteLog, conNoValues, (deleteLogError, deleteLogResults) => {
+                    if (deleteLogError) {
+                        console.error('bon_log 테이블 삭제 쿼리 오류:', deleteLogError);
+                        return res.status(500).send('bon_log 테이블 삭제 중 오류가 발생했습니다.');
+                    }
+
+                    res.send({
+                        message: `작업 완료: ${updateBaechaResults.affectedRows}개의 행이 t_baecha에서 업데이트되었고, ${deletePlanningResults.affectedRows}개의 행이 bon_planing_sin에서 삭제되었으며, ${deleteLogResults.affectedRows}개의 행이 bon_log에서 삭제되었습니다.`
+                    });
+                });
+            });
+        });
+    });
+});
 
 ///////관리자 페이지----------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1881,3 +2055,6 @@ app.post('/api/search-by-car', (req, res) => {
         res.json(results);
     });
 });
+
+
+
