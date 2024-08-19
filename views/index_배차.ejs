@@ -677,31 +677,6 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
 
 
 document.addEventListener('DOMContentLoaded', function() {
-    let touchStartX = 0;
-    let touchEndX = 0;
-    const swipeThreshold = 50; // 스와이프 감지 임계값 (픽셀 단위)
-
-    function handleGesture() {
-        // 오른쪽으로 스와이프한 경우 (뒤로 가기 방지)
-        if (touchEndX > touchStartX && (touchEndX - touchStartX) > swipeThreshold) {
-            alert("배차종료를 위해 운행종료 버튼을 이용 해주세요.");
-            history.pushState(null, null, location.href); // 현재 페이지에 머무르도록 처리
-        } else if (touchEndX < touchStartX && (touchStartX - touchEndX) > swipeThreshold) {
-            // 왼쪽으로 스와이프한 경우 (앞으로 가기 방지)
-            alert("배차종료를 위해 운행종료 버튼을 이용 해주세요.");
-            history.pushState(null, null, location.href); // 현재 페이지에 머무르도록 처리
-        }
-    }
-
-    document.addEventListener('touchstart', function(event) {
-        touchStartX = event.changedTouches[0].screenX;
-    });
-
-    document.addEventListener('touchend', function(event) {
-        touchEndX = event.changedTouches[0].screenX;
-        handleGesture(); // 제스처를 감지하여 처리
-    });
-
     // 기존 popstate 이벤트도 함께 설정
     window.addEventListener('popstate', function(event) {
         alert("배차종료를 위해 운행종료 버튼을 이용 해주세요.");
