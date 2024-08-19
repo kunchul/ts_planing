@@ -676,30 +676,40 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
 });
 
 
-// 페이지를 떠나려고 할 때 경고 메시지를 표시
-window.addEventListener('beforeunload', function (event) {
-    const confirmationMessage = "다른 페이지로 이동하시겠습니까?";
-    event.returnValue = confirmationMessage;
-    return confirmationMessage;
-});
-
 document.addEventListener('DOMContentLoaded', function() {
-    // 페이지 로드 시 히스토리 상태 추가
-    history.pushState(null, null, location.href);
+    let touchStartX = 0;
+    let touchEndX = 0;
+    const swipeThreshold = 50; // 스와이프 감지 임계값 (픽셀 단위)
 
-    // 뒤로 가기 버튼을 누를 때 발생하는 popstate 이벤트 처리
-    window.addEventListener('popstate', function(event) {
-        // 사용자가 뒤로 가기 버튼을 눌렀을 때 경고 메시지를 표시
-        alert("배차종료를 위해 운행종료 버튼을 이용 해주세요.");
-        
-        // 다시 현재 페이지 상태를 히스토리에 추가하여 뒤로 가기 동작을 무력화
-        history.pushState(null, null, window.location.href);
+    function handleGesture() {
+        // 오른쪽으로 스와이프한 경우 (뒤로 가기 방지)
+        if (touchEndX > touchStartX && (touchEndX - touchStartX) > swipeThreshold) {
+            alert("배차종료를 위해 운행종료 버튼을 이용 해주세요.");
+            history.pushState(null, null, location.href); // 현재 페이지에 머무르도록 처리
+        } else if (touchEndX < touchStartX && (touchStartX - touchEndX) > swipeThreshold) {
+            // 왼쪽으로 스와이프한 경우 (앞으로 가기 방지)
+            alert("배차종료를 위해 운행종료 버튼을 이용 해주세요.");
+            history.pushState(null, null, location.href); // 현재 페이지에 머무르도록 처리
+        }
+    }
+
+    document.addEventListener('touchstart', function(event) {
+        touchStartX = event.changedTouches[0].screenX;
     });
-});
 
-window.addEventListener('load', function() {
+    document.addEventListener('touchend', function(event) {
+        touchEndX = event.changedTouches[0].screenX;
+        handleGesture(); // 제스처를 감지하여 처리
+    });
+
+    // 기존 popstate 이벤트도 함께 설정
+    window.addEventListener('popstate', function(event) {
+        alert("배차종료를 위해 운행종료 버튼을 이용 해주세요.");
+        history.pushState(null, null, location.href); // 뒤로 가기 방지
+    });
+
     // 페이지 로드 시 히스토리 상태 추가
-    history.pushState(null, null, location.href);
+    history.replaceState(null, null, location.href);
 });
 
 
