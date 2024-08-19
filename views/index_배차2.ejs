@@ -658,7 +658,28 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
         }
     }, 500); // 0.5초(500ms) 지연
 });
+    // 뒤로 가기 확인 함수
+    function confirmBack() {
+        const userConfirmed = confirm("뒤로 가시겠습니까?");
+        
+        if (userConfirmed) {
+            // 사용자가 "예"를 누른 경우 루트(/) 페이지로 이동
+            window.location.href = '/';
+        } else {
+            // 사용자가 "아니오"를 누른 경우 현재 페이지에 머무름
+            history.pushState(null, null, location.href);
+        }
+    }
 
+    // 뒤로 가기 시도 시 알림창 띄우기
+    window.addEventListener('popstate', function(event) {
+        confirmBack();
+    });
+
+    // 페이지 로드 시 현재 상태를 history에 추가하여 뒤로가기 이벤트 감지
+    window.addEventListener('load', function() {
+        history.pushState(null, null, location.href);
+    });
 
 </script>
 </body>

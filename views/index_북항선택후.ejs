@@ -380,4 +380,27 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     };
+
+    // 뒤로 가기 확인 함수
+    function confirmBack() {
+        const userConfirmed = confirm("뒤로 가시겠습니까?");
+        
+        if (userConfirmed) {
+            // 사용자가 "예"를 누른 경우 뒤로 가기
+            history.back();
+        } else {
+            // 사용자가 "아니오"를 누른 경우 다시 앞으로 돌아옴
+            history.pushState(null, null, location.href);
+        }
+    }
+
+    // 뒤로 가기 시도 시 알림창 띄우기
+    window.addEventListener('popstate', function(event) {
+        confirmBack();
+    });
+
+    // 페이지 로드 시 현재 상태를 history에 추가하여 뒤로가기 이벤트 감지
+    window.addEventListener('load', function() {
+        history.pushState(null, null, location.href);
+    });    
     </script>
