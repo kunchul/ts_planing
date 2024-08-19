@@ -660,44 +660,45 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
     }, 500); // 0.5초(500ms) 지연
 });
 
-    // 새로고침을 확인하는 함수
-    function confirmRefresh() {
-        const userConfirmed = confirm("새로고침 하시겠습니까?");
-        
-        if (userConfirmed) {
-            // 사용자가 "예"를 누른 경우 페이지를 새로고침
-            location.reload();
-        }
+// 새로고침 확인 함수
+function confirmRefresh() {
+    const userConfirmed = confirm("새로고침 하시겠습니까 ?");
+    
+    if (userConfirmed) {
+        // 사용자가 "예"를 누른 경우 페이지 새로고침
+        location.reload();
     }
+}
 
-    // 페이지가 새로고침되기 전에 확인 창을 띄우도록 설정
-    window.addEventListener('beforeunload', function(event) {
-        event.preventDefault();
-        confirmRefresh();
-    });
+// 새로고침 전에 확인 창을 표시하도록 설정
+window.addEventListener('beforeunload', function(event) {
+    event.preventDefault();
+    event.returnValue = ''; // 이 라인이 필요할 수 있습니다.
+    confirmRefresh();
+});
 
-    // 뒤로 가기 확인 함수
-    function confirmBack() {
-        const userConfirmed = confirm("뒤로 가시겠습니까?");
-        
-        if (userConfirmed) {
-            // 사용자가 "예"를 누른 경우 루트(/) 페이지로 이동
-            window.location.href = '/';
-        } else {
-            // 사용자가 "아니오"를 누른 경우 현재 페이지에 머무름
-            history.pushState(null, null, location.href);
-        }
-    }
-
-    // 뒤로 가기 시도 시 알림창 띄우기
-    window.addEventListener('popstate', function(event) {
-        confirmBack();
-    });
-
-    // 페이지 로드 시 현재 상태를 history에 추가하여 뒤로가기 이벤트 감지
-    window.addEventListener('load', function() {
+// 뒤로 가기 확인 함수
+function confirmBack() {
+    const userConfirmed = confirm("뒤로가기를 하시겠습니까 ?");
+    
+    if (userConfirmed) {
+        // 사용자가 "예"를 누른 경우 루트(/) 페이지로 이동
+        window.location.href = '/';
+    } else {
+        // 사용자가 "아니오"를 누른 경우 현재 페이지에 머무름
         history.pushState(null, null, location.href);
-    });
+    }
+}
+
+// 뒤로 가기 시도 시 알림 창 표시
+window.addEventListener('popstate', function(event) {
+    confirmBack();
+});
+
+// 페이지 로드 시 현재 상태를 history에 추가하여 뒤로 가기 이벤트 감지
+window.addEventListener('load', function() {
+    history.pushState(null, null, location.href);
+});
 
 
 
