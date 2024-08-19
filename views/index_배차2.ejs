@@ -12,6 +12,11 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
     <style>
+
+        html, body {
+                overscroll-behavior: none;
+                overflow-x: hidden;
+            }
         /* 스타일 설정 */
         body {
             font-family: 'Muli', sans-serif;
@@ -680,6 +685,29 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
     window.addEventListener('load', function() {
         history.pushState(null, null, location.href);
     });
+
+    window.addEventListener('beforeunload', function (event) {
+    // 사용자에게 보여질 메시지 설정
+    const confirmationMessage = "다른페이지로 이동하시겠습니까 ?.";
+
+    // 특정 브라우저에서는 커스텀 메시지를 무시하고 기본 메시지를 표시할 수 있습니다.
+    event.returnValue = confirmationMessage; 
+
+    // 메시지를 반환하여 경고창이 뜨도록 함
+    return confirmationMessage;
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 사용자가 뒤로 가기 버튼을 누르거나 뒤로 가는 동작이 발생했을 때 경고 메시지 표시
+    window.addEventListener('popstate', function(event) {
+        if (confirm("뒤로 가시겠습니까?")) {
+            window.history.back(); // 예를 누르면 이전 페이지로 이동
+        } else {
+            window.history.pushState(null, null, window.location.href); // 아니요를 누르면 현재 페이지 유지
+        }
+    });
+});
+
 
 </script>
 </body>
