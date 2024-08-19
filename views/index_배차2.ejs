@@ -701,6 +701,22 @@ document.addEventListener('DOMContentLoaded', function() {
     history.replaceState(null, null, location.href);
 });
 
+document.addEventListener('DOMContentLoaded', function() {
+    // 페이지 로드 시 히스토리 상태 추가
+    history.replaceState(null, null, location.href);
+
+    // 뒤로 가기 버튼을 누르거나, 스와이프 제스처로 뒤로 가기 시도 시
+    window.addEventListener('popstate', function(event) {
+        // 뒤로 가기를 감지하고 홈 페이지로 이동
+        window.location.href = '/';
+    });
+});
+
+window.addEventListener('load', function() {
+    // 페이지가 로드될 때 히스토리 상태를 추가
+    history.replaceState(null, null, location.href);
+});
+
 
 </script>
 </body>
