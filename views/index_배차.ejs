@@ -21,6 +21,7 @@
         align-items: center;
         height: 100vh;
         background: linear-gradient(135deg, #ffffff 70%, #8f71d8 100%);
+        overflow: hidden;
     }
 
         .container {
@@ -29,6 +30,8 @@
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             border-radius: 10px;
             overflow: hidden;
+            overscroll-behavior-y: contain;
+            overflow-y: scroll;
         }
 
         .section {
@@ -660,7 +663,35 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
     }, 500); // 0.5초(500ms) 지연
 });
 
+document.addEventListener('DOMContentLoaded', function() {
+            let isPageChanged = false;
 
+            // 페이지 새로고침 시 확인 팝업 표시
+            window.addEventListener('beforeunload', (event) => {
+                if (isPageChanged) {
+                    const message = '페이지에서 변경된 내용이 저장되지 않을 수 있습니다. 새로고침 하시겠습니까?';
+                    event.preventDefault();
+                    event.returnValue = message; // 대부분의 브라우저에서 이 방식이 필요
+                    return message; // 일부 브라우저에서 이 방식이 필요
+                }
+            });
+
+            // 뒤로가기 시 확인 팝업 표시
+            window.addEventListener('popstate', (event) => {
+                if (isPageChanged) {
+                    if (!confirm('페이지에서 변경된 내용이 저장되지 않을 수 있습니다. 뒤로가시겠습니까?')) {
+                        history.pushState(null, null, location.href);
+                    }
+                }
+            });
+
+            // 페이지에서 변경이 감지된 경우
+            document.querySelectorAll('.btn, .btn2').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    isPageChanged = true;
+                });
+            });
+        });
 
 
 
