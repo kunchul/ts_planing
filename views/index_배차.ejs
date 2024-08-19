@@ -14,6 +14,7 @@
     <style>
     html, body {
         overscroll-behavior: none;
+        overflow-x: hidden;
     }
 
     body {
@@ -674,36 +675,27 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
     }, 500); // 0.5초(500ms) 지연
 });
 
+window.addEventListener('beforeunload', function (event) {
+    // 사용자에게 보여질 메시지 설정
+    const confirmationMessage = "다른페이지로 이동하시겠습니까 ?.";
+
+    // 특정 브라우저에서는 커스텀 메시지를 무시하고 기본 메시지를 표시할 수 있습니다.
+    event.returnValue = confirmationMessage; 
+
+    // 메시지를 반환하여 경고창이 뜨도록 함
+    return confirmationMessage;
+});
+
 document.addEventListener('DOMContentLoaded', function() {
-            let isPageChanged = false;
-
-            // 페이지 새로고침 시 확인 팝업 표시
-            window.addEventListener('beforeunload', (event) => {
-                if (isPageChanged) {
-                    const message = '페이지에서 변경된 내용이 저장되지 않을 수 있습니다. 새로고침 하시겠습니까?';
-                    event.preventDefault();
-                    event.returnValue = message; // 대부분의 브라우저에서 이 방식이 필요
-                    return message; // 일부 브라우저에서 이 방식이 필요
-                }
-            });
-
-            // 뒤로가기 시 확인 팝업 표시
-            window.addEventListener('popstate', (event) => {
-                if (isPageChanged) {
-                    if (!confirm('페이지에서 변경된 내용이 저장되지 않을 수 있습니다. 뒤로가시겠습니까?')) {
-                        history.pushState(null, null, location.href);
-                    }
-                }
-            });
-
-            // 페이지에서 변경이 감지된 경우
-            document.querySelectorAll('.btn, .btn2').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    isPageChanged = true;
-                });
-            });
-        });
-
+    // 사용자가 뒤로 가기 버튼을 누르거나 뒤로 가는 동작이 발생했을 때 경고 메시지 표시
+    window.addEventListener('popstate', function(event) {
+        if (confirm("뒤로 가시겠습니까?")) {
+            window.history.back(); // 예를 누르면 이전 페이지로 이동
+        } else {
+            window.history.pushState(null, null, window.location.href); // 아니요를 누르면 현재 페이지 유지
+        }
+    });
+});
 
 
 
