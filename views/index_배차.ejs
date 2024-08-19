@@ -12,14 +12,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
     <style>
-        body {
-            -webkit-user-select: none; /* Chrome, Safari */
-            -moz-user-select: none; /* Firefox */
-            -ms-user-select: none; /* Internet Explorer/Edge */
-            user-select: none; /* Non-prefixed version, currently supported by Chrome, Opera, and Edge */
-        }
 
-    /* 스타일 설정 */
     body {
         font-family: 'Muli', sans-serif;
         margin: 0;
@@ -667,28 +660,34 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
     }, 500); // 0.5초(500ms) 지연
 });
 
-document.addEventListener('DOMContentLoaded', function() {
-    let touchStartY = 0;
+let isPageChanged = false;
 
-    // 사용자가 화면을 터치하기 시작할 때 호출됩니다
-    document.addEventListener('touchstart', function(event) {
-        // 터치 시작 위치의 Y 좌표를 저장합니다
-        touchStartY = event.touches[0].clientY;
-    }, { passive: true });
-
-    // 터치가 끝났을 때 호출됩니다
-    document.addEventListener('touchend', function(event) {
-        // 터치 끝 위치의 Y 좌표를 가져옵니다
-        const touchEndY = event.changedTouches[0].clientY;
-        
-        // 터치 끝 위치가 터치 시작 위치보다 큰 경우 (즉, 아래로 스와이프한 경우)
-        if (touchEndY > touchStartY) {
-            // 기본 스크롤 동작(새로고침 등)을 방지합니다
-            event.preventDefault();
-        }
-    }, { passive: false });
+// 페이지 변경을 감지
+window.addEventListener('load', () => {
+    window.addEventListener('scroll', () => {
+        isPageChanged = true;
+    });
 });
 
+// 새로고침 시 확인 팝업
+window.addEventListener('beforeunload', (event) => {
+    if (isPageChanged) {
+        // 표준 브라우저 메시지 표시
+        event.preventDefault(); // Chrome, Firefox
+        event.returnValue = ''; // Safari
+    }
+});
+
+// 새로고침 여부를 사용자에게 묻는 추가적인 처리 방법 (모바일 지원을 위해)
+window.addEventListener('pagehide', () => {
+    if (isPageChanged) {
+        const confirmation = confirm('새로고침하시겠습니까 ?');
+        if (!confirmation) {
+            // 사용자가 취소를 선택한 경우 페이지 상태 복원
+            window.history.pushState(null, null, window.location.href);
+        }
+    }
+});
 
 
 
