@@ -12,20 +12,20 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
     <style>
+    html, body {
+        overscroll-behavior: none;
+        overflow-x: hidden;
+    }
 
-        html, body {
-                overscroll-behavior: none;
-                overflow-x: hidden;
-            }
-        /* 스타일 설정 */
-        body {
-            font-family: 'Muli', sans-serif;
-            margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            background: linear-gradient(135deg, #ffffff 70%, #8f71d8 100%);
+    body {
+        font-family: 'Muli', sans-serif;
+        margin: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 130vh;
+        background: linear-gradient(135deg, #ffffff 70%, #8f71d8 100%);
+
         }
 
         .container {
@@ -37,6 +37,16 @@
             overscroll-behavior-y: contain;
             overflow-x: hidden;
         }
+
+        .scrollable-content {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow-y: scroll; /* 스크롤 가능한 영역 설정 */
+        }
+
         .section {
             padding: 20px;
             border-bottom: 1px solid #ddd;
@@ -146,6 +156,8 @@
         }
     </style>
 </head>
+
+
 <body>
     <div class="container">
         <!-- 현재 배차 -->
@@ -155,7 +167,7 @@
             </div>
             <div class="title blinking-text">현재 배차</div>
             <div class="row">
-                <div class="cell header" >구간</div>
+                <div class="cell header">구간</div>
             </div>
             <div class="row">
                 <div class="cell" id="SANG_HA"><%= currentData.SANG_HA %></div>
@@ -166,7 +178,7 @@
             </div>
             <div class="row">
                 <div class="cell" id="CON_NO"><%= currentData.CON_NO %></div>
-                <div class="cell" ><%= currentData.CON_KU %></div>
+                <div class="cell"><%= currentData.CON_KU %></div>
             </div>
             <div class="row">
                 <div class="cell header">중량</div>
@@ -241,6 +253,8 @@
 
     <script>
 
+
+
 document.addEventListener('DOMContentLoaded', function() {
     console.log("JavaScript 코드가 로드되었습니다.");
 
@@ -257,7 +271,6 @@ document.addEventListener('DOMContentLoaded', function() {
             if (data && data.assignedTotal !== undefined && data.currentData && data.currentData.SASI !== undefined) {
                 currentTotal = data.assignedTotal;
                 sasiValue = data.currentData.SASI;
-                console.log(`현재 TOTAL 값: ${currentTotal}`);
                 console.log(`현재 SASI 값: ${sasiValue}`);
             } else {
                 console.error('TOTAL 또는 SASI 값이 설정되지 않았습니다.', data);
@@ -631,7 +644,6 @@ document.getElementById('copino2').addEventListener('click', function() {
     });
 });
 
-
 document.getElementById('loadingComplete').addEventListener('click', function() {
     // nextDispatchSection을 보이게 합니다.
     document.getElementById('nextDispatchSection').style.display = 'block';
@@ -665,6 +677,7 @@ document.getElementById('loadingComplete').addEventListener('click', function() 
     }, 500); // 0.5초(500ms) 지연
 });
 
+
 document.addEventListener('DOMContentLoaded', function() {
     // 기존 popstate 이벤트도 함께 설정
     window.addEventListener('popstate', function(event) {
@@ -677,21 +690,8 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 
-document.addEventListener('DOMContentLoaded', function() {
-    // 페이지 로드 시 히스토리 상태 추가
-    history.replaceState(null, null, location.href);
 
-    // 뒤로 가기 버튼을 누르거나, 스와이프 제스처로 뒤로 가기 시도 시
-    window.addEventListener('popstate', function(event) {
-        // 뒤로 가기를 감지하고 홈 페이지로 이동
-        window.location.href = '/';
-    });
-});
 
-window.addEventListener('load', function() {
-    // 페이지가 로드될 때 히스토리 상태를 추가
-    history.replaceState(null, null, location.href);
-});
 
 
 </script>
