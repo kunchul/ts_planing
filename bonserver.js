@@ -1038,7 +1038,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
         }
     
         const selectedSangHa = row.SANG_HA;
-
+    
         // bon_session 테이블에 데이터 삽입
         connection.query(
             `INSERT INTO bon_session (NAME, CAR, PHONE, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, DATA_INS)
@@ -1050,26 +1050,39 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                     connection.end();
                     return res.status(500).send('내부 서버 오류');
                 }
-
-                req.session.assignedData = {
-                    assignedTotal: row.TOTAL,
-                    currentData: {
-                        SANG_HA: row.SANG_HA,
-                        CON_NO: row.CON_NO,
-                        CON_KU: row.CON_KU,
-                        CON_KG: row.CON_KG,
-                        B_KUM_IN: row.B_KUM_IN,
-                        CON_TEMP: row.CON_TEMP,
-                        CON_CLASS: row.CON_CLASS,
-                        SASI: user.SASI
+    
+                // 삽입 후 bon_planing_sin 테이블의 RESERVE 값을 업데이트
+                connection.query(
+                    'UPDATE bon_planing_sin SET RESERVE = "Y" WHERE CON_NO = ?',
+                    [row.CON_NO],
+                    (err) => {
+                        if (err) {
+                            console.error('bon_planing_sin 업데이트 중 오류:', err);
+                            connection.end();
+                            return res.status(500).send('내부 서버 오류');
+                        }
+    
+                        req.session.assignedData = {
+                            assignedTotal: row.TOTAL,
+                            currentData: {
+                                SANG_HA: row.SANG_HA,
+                                CON_NO: row.CON_NO,
+                                CON_KU: row.CON_KU,
+                                CON_KG: row.CON_KG,
+                                B_KUM_IN: row.B_KUM_IN,
+                                CON_TEMP: row.CON_TEMP,
+                                CON_CLASS: row.CON_CLASS,
+                                SASI: user.SASI
+                            }
+                        };
+    
+                        finalizeResponse();
                     }
-                };
-
-                finalizeResponse();
+                );
             }
         );
     }
-
+    
     function finalizeResponse() {
         res.render('index_배차', {
             user: { id: req.session.user.id, car: req.session.car, role: req.session.user.role },
