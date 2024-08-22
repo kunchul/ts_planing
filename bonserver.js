@@ -932,7 +932,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
         return res.redirect('/');
     }
 
-    req.session.returnTo = '/driver3';
+    req.session.returnTo = '/driver1';
 
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1);
