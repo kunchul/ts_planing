@@ -356,6 +356,7 @@ document.addEventListener('DOMContentLoaded', function() {
             alert('하차 완료 업데이트 중 오류 발생.');
         });
     });
+
     document.getElementById('endDriving2').addEventListener('click', function() {
         if (confirm("운행을 정말 종료하시겠습니까?")) {
             console.log("운행종료 버튼 클릭됨.");
@@ -624,24 +625,29 @@ document.getElementById('copino2').addEventListener('click', function() {
 
 
     document.getElementById('loadingComplete').addEventListener('click', function() {
-    const newLocation = document.getElementById('SANG_HA').innerText.trim(); // 업데이트할 위치 데이터 가져오기
+        const newLocation = document.getElementById('SANG_HA').innerText.trim();
+        const newcunt = document.getElementById('CON_NO').innerText.trim(); // 컨테이너 번호 가져오기
 
-    fetch('/api/update-current-location', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ newLocation })
-    })
-    .then(response => response.json())
-    .then(data => {
-
-    })
-    .catch(error => {
-        console.error('CURRENT_LOCATION 업데이트 중 오류 발생:', error);
-        alert('업데이트 중 오류가 발생했습니다.');
+        fetch('/api/update-current-location', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ newLocation, newcunt }) // newLocation과 newcunt 값을 함께 전송
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log('CURRENT_LOCATION 업데이트 완료:', data.message);
+            } else {
+                console.error('CURRENT_LOCATION 업데이트 실패:', data.message);
+            }
+        })
+        .catch(error => {
+            console.error('CURRENT_LOCATION 업데이트 중 오류 발생:', error);
+            alert('업데이트 중 오류가 발생했습니다.');
+        });
     });
-});
 
 document.getElementById('loadingComplete').addEventListener('click', function() {
     // nextDispatchSection을 보이게 합니다.

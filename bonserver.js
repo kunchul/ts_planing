@@ -33,10 +33,11 @@ app.use(session({
     cookie: {
         secure: false,
         httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000,
+        maxAge: 12 * 60 * 60 * 1000,
         sameSite: 'Lax'
     }
 }));
+
 let activeSessions = {};
 
 
@@ -505,17 +506,44 @@ app.post('/start-driving', (req, res) => {
 
             const { CAR, PART, NAME } = results[0];
 
-            // bon_carplayer 테이블에 인서트
-            const insertQuery = 'INSERT INTO bon_carplayer (CAR, `ON`, PART, NAME) VALUES (?, ?, ?, ?)' ;
-            connection.query(insertQuery, [CAR, currentTime, PART, NAME], (insertError) => {
-                if (insertError) {
-                    console.error('데이터베이스에 값을 삽입하는 중 오류 발생: ', insertError);
+            // bon_carplayer 테이블에서 NAME이 일치하는지 확인
+            connection.query('SELECT * FROM bon_carplayer WHERE NAME = ?', [NAME], (selectError, selectResults) => {
+                if (selectError) {
+                    console.error('bon_carplayer 조회 중 오류 발생: ', selectError);
                     connection.end();
-                    return res.status(500).json({ success: false, message: '데이터베이스에 값을 삽입하는 중 오류가 발생했습니다.', error: insertError });
+                    return res.status(500).json({ success: false, message: 'bon_carplayer 조회 중 오류가 발생했습니다.', error: selectError });
                 }
 
-                connection.end();
-                res.json({ success: true });
+                if (selectResults.length > 0) {
+                    // NAME이 일치하는 경우: OFF 컬럼을 삭제하고 나머지 값을 업데이트
+                    connection.query(
+                        'UPDATE bon_carplayer SET CAR = ?, `ON` = ?, PART = ?, OFF = NULL WHERE NAME = ?',
+                        [CAR, currentTime, PART, NAME],
+                        (updateError) => {
+                            if (updateError) {
+                                console.error('bon_carplayer 업데이트 중 오류 발생: ', updateError);
+                                connection.end();
+                                return res.status(500).json({ success: false, message: 'bon_carplayer 업데이트 중 오류가 발생했습니다.', error: updateError });
+                            }
+
+                            connection.end();
+                            res.json({ success: true });
+                        }
+                    );
+                } else {
+                    // NAME이 일치하지 않는 경우: 새로운 레코드를 삽입
+                    const insertQuery = 'INSERT INTO bon_carplayer (CAR, `ON`, PART, NAME) VALUES (?, ?, ?, ?)';
+                    connection.query(insertQuery, [CAR, currentTime, PART, NAME], (insertError) => {
+                        if (insertError) {
+                            console.error('데이터베이스에 값을 삽입하는 중 오류 발생: ', insertError);
+                            connection.end();
+                            return res.status(500).json({ success: false, message: '데이터베이스에 값을 삽입하는 중 오류가 발생했습니다.', error: insertError });
+                        }
+
+                        connection.end();
+                        res.json({ success: true });
+                    });
+                }
             });
         });
     });
@@ -904,7 +932,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
         return res.redirect('/');
     }
 
-    req.session.returnTo = '/LOGIN';
+    req.session.returnTo = '/driver3';
 
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1);
@@ -1252,8 +1280,6 @@ app.post('/api/insert-log', (req, res) => {
     const { conNo, sangHa } = req.body;
     const connection = createConnection(dbConfig1);
 
-
-
     connection.query('SELECT CAR FROM bon_user WHERE ID = ?', [userId], (error, results) => {
         if (error) {
             console.error('사용자 조회 오류:', error);
@@ -1265,17 +1291,44 @@ app.post('/api/insert-log', (req, res) => {
             const carNumber = results[0].CAR;
             const time = getCurrentSeoulTime();
 
-
-
-            connection.query('INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
-                [carNumber, conNo, sangHa, time], (insertError) => {
+            // 먼저 CON_NO가 이미 존재하는지 확인
+            connection.query('SELECT * FROM bon_log WHERE CON_NO = ?', [conNo], (selectError, selectResults) => {
+                if (selectError) {
+                    console.error('로그 조회 오류:', selectError);
                     connection.end();
-                    if (insertError) {
-                        console.error('로그 삽입 오류:', insertError);
-                        return res.status(500).json({ success: false, message: 'Insert log error', error: insertError });
-                    }
-                    res.json({ success: true });
-                });
+                    return res.status(500).json({ success: false, message: 'Select log error', error: selectError });
+                }
+
+                if (selectResults.length > 0) {
+                    // CON_NO가 이미 존재하면 업데이트
+                    connection.query(
+                        'UPDATE bon_log SET CAR = ?, SANG_HA = ?, TIME = ? WHERE CON_NO = ?',
+                        [carNumber, sangHa, time, conNo],
+                        (updateError) => {
+                            connection.end();
+                            if (updateError) {
+                                console.error('로그 업데이트 오류:', updateError);
+                                return res.status(500).json({ success: false, message: 'Update log error', error: updateError });
+                            }
+                            res.json({ success: true });
+                        }
+                    );
+                } else {
+                    // CON_NO가 존재하지 않으면 삽입
+                    connection.query(
+                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
+                        [carNumber, conNo, sangHa, time],
+                        (insertError) => {
+                            connection.end();
+                            if (insertError) {
+                                console.error('로그 삽입 오류:', insertError);
+                                return res.status(500).json({ success: false, message: 'Insert log error', error: insertError });
+                            }
+                            res.json({ success: true });
+                        }
+                    );
+                }
+            });
         } else {
             console.error('사용자 없음: ', userId);
             connection.end();
@@ -1309,24 +1362,47 @@ app.post('/api/update-ha-work', (req, res) => {
     }
 
     const { conNo, status } = req.body;
+    const userId = req.session.user.id;
     const connection = createConnection(dbConfig1);
 
-    // bon_log 테이블의 HA_WORK 업데이트
-    connection.query('UPDATE bon_log SET HA_WORK = ? WHERE CON_NO = ?', [status, conNo], (error, results) => {
-        if (error) {
+    // 현재 로그인한 유저의 PHONE 값을 가져오기
+    connection.query('SELECT PHONE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
+        if (err || userResults.length === 0) {
+            console.error('유저 정보 조회 중 오류:', err);
             connection.end();
-            return res.status(500).json({ success: false, message: 'HA_WORK 업데이트 오류' });
+            return res.status(500).json({ success: false, message: '유저 정보를 가져올 수 없습니다.' });
         }
 
-        // bon_planing_sin 테이블에서 CON_NO에 해당하는 행 삭제
-        connection.query('DELETE FROM bon_planing_sin WHERE CON_NO = ?', [conNo], (deleteError, deleteResults) => {
-            connection.end(); // 쿼리 실행 후 연결 종료
+        const userPhone = userResults[0].PHONE;
 
-            if (deleteError) {
-                return res.status(500).json({ success: false, message: 'bon_planing_sin 삭제 오류' });
+        // bon_session 테이블에서 PHONE 값이 일치하는 행 삭제
+        connection.query('DELETE FROM bon_session WHERE PHONE = ?', [userPhone], (deleteSessionError, deleteSessionResults) => {
+            if (deleteSessionError) {
+                console.error('bon_session 삭제 중 오류:', deleteSessionError);
+                connection.end();
+                return res.status(500).json({ success: false, message: 'bon_session 삭제 오류' });
             }
 
-            res.json({ success: true, message: '업데이트 및 삭제 완료' });
+            // bon_log 테이블의 HA_WORK 업데이트
+            connection.query('UPDATE bon_log SET HA_WORK = ? WHERE CON_NO = ?', [status, conNo], (error, results) => {
+                if (error) {
+                    console.error('HA_WORK 업데이트 중 오류:', error);
+                    connection.end();
+                    return res.status(500).json({ success: false, message: 'HA_WORK 업데이트 오류' });
+                }
+
+                // bon_planing_sin 테이블에서 CON_NO에 해당하는 행 삭제
+                connection.query('DELETE FROM bon_planing_sin WHERE CON_NO = ?', [conNo], (deleteError, deleteResults) => {
+                    connection.end(); // 쿼리 실행 후 연결 종료
+
+                    if (deleteError) {
+                        console.error('bon_planing_sin 삭제 중 오류:', deleteError);
+                        return res.status(500).json({ success: false, message: 'bon_planing_sin 삭제 오류' });
+                    }
+
+                    res.json({ success: true, message: '업데이트 및 삭제 완료' });
+                });
+            });
         });
     });
 });
@@ -1354,7 +1430,7 @@ app.post('/api/update-current-location', (req, res) => {
     }
 
     const userId = req.session.user.id;
-    const { newLocation } = req.body; // 클라이언트에서 새로운 위치 데이터 받기
+    const { newLocation, newcunt } = req.body; // 클라이언트에서 새로운 위치 데이터와 컨테이너 번호 받기
     const connection = createConnection(dbConfig1);
 
     // bon_user 테이블에서 CAR 값 가져오기
@@ -1368,9 +1444,12 @@ app.post('/api/update-current-location', (req, res) => {
         if (results.length > 0) {
             const car = results[0].CAR;
 
+            // newLocation과 newcunt 값을 결합
+            const combinedLocation = `${newcunt} : ${newLocation}`;
+
             // bon_carplayer 테이블의 CURRENT_LOCATION 업데이트
             connection.query('UPDATE bon_carplayer SET CURRENT_LOCATION = ? WHERE CAR = ? AND OFF IS NULL', 
-            [newLocation, car], (updateError, updateResults) => {
+            [combinedLocation, car], (updateError, updateResults) => {
                 connection.end();
                 if (updateError) {
                     console.error('CURRENT_LOCATION 업데이트 오류:', updateError);
@@ -1498,6 +1577,36 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                 connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [selectedTotal.B_IDX], (err) => {
                     if (err) {
                         console.error('RESERVE 업데이트 중 오류:', err);
+                        return reject(err);
+                    }
+                    resolve();
+                });
+            });
+
+            // 추가 로직: bon_log 테이블에 데이터 삽입 또는 업데이트
+            const { CON_NO, SANG_HA } = selectedTotal;
+
+            const carResult = await new Promise((resolve, reject) => {
+                connection.query('SELECT CAR FROM bon_user WHERE ID = ?', [req.session.user.id], (err, results) => {
+                    if (err || results.length === 0) {
+                        console.error('CAR 조회 중 오류:', err);
+                        return reject(err);
+                    }
+                    resolve(results[0].CAR);
+                });
+            });
+
+            const currentTime = getCurrentSeoulTime();
+
+            await new Promise((resolve, reject) => {
+                connection.query(`
+                    INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME)
+                    VALUES (?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                        CAR = VALUES(CAR), SANG_HA = VALUES(SANG_HA), TIME = VALUES(TIME);
+                `, [carResult, CON_NO, SANG_HA, currentTime], (err) => {
+                    if (err) {
+                        console.error('bon_log 삽입 또는 업데이트 중 오류:', err);
                         return reject(err);
                     }
                     resolve();
