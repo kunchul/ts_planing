@@ -1583,8 +1583,21 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                 });
             });
 
-            // 추가 로직: bon_log 테이블에 데이터 삽입 또는 업데이트
-            const { CON_NO, SANG_HA } = selectedTotal;
+            const { B_IDX } = selectedTotal;
+
+            // B_IDX 값을 이용해 bon_planing_sin에서 CON_NO 값을 추출
+            const extractedConNo = await new Promise((resolve, reject) => {
+                connection.query(`SELECT CON_NO FROM bon_planing_sin WHERE B_IDX = ?`, [B_IDX], (err, results) => {
+                    if (err) {
+                        console.error('CON_NO 추출 중 오류:', err);
+                        return reject(err);
+                    }
+                    if (results.length === 0) {
+                        return reject(new Error('해당 B_IDX에 대한 CON_NO를 찾을 수 없습니다.'));
+                    }
+                    resolve(results[0].CON_NO);
+                });
+            });
 
             const carResult = await new Promise((resolve, reject) => {
                 connection.query('SELECT CAR FROM bon_user WHERE ID = ?', [req.session.user.id], (err, results) => {
@@ -1598,20 +1611,48 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 
             const currentTime = getCurrentSeoulTime();
 
-            await new Promise((resolve, reject) => {
-                connection.query(`
-                    INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME)
-                    VALUES (?, ?, ?, ?)
-                    ON DUPLICATE KEY UPDATE
-                        CAR = VALUES(CAR), SANG_HA = VALUES(SANG_HA), TIME = VALUES(TIME);
-                `, [carResult, CON_NO, SANG_HA, currentTime], (err) => {
-                    if (err) {
-                        console.error('bon_log 삽입 또는 업데이트 중 오류:', err);
-                        return reject(err);
+            // 먼저 CON_NO가 이미 존재하는지 확인
+            const existingLog = await new Promise((resolve, reject) => {
+                connection.query('SELECT * FROM bon_log WHERE CON_NO = ?', [extractedConNo], (selectError, selectResults) => {
+                    if (selectError) {
+                        console.error('로그 조회 오류:', selectError);
+                        return reject(selectError);
                     }
-                    resolve();
+                    resolve(selectResults.length > 0);
                 });
             });
+
+            if (existingLog) {
+                // CON_NO가 이미 존재하면 업데이트
+                await new Promise((resolve, reject) => {
+                    connection.query(
+                        'UPDATE bon_log SET CAR = ?, SANG_HA = ?, TIME = ? WHERE CON_NO = ?',
+                        [carResult, selectedTotal.SANG_HA, currentTime, extractedConNo],
+                        (updateError) => {
+                            if (updateError) {
+                                console.error('로그 업데이트 오류:', updateError);
+                                return reject(updateError);
+                            }
+                            resolve();
+                        }
+                    );
+                });
+            } else {
+                // CON_NO가 존재하지 않으면 삽입
+                await new Promise((resolve, reject) => {
+                    connection.query(
+                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
+                        [carResult, extractedConNo, selectedTotal.SANG_HA, currentTime],
+                        (insertError) => {
+                            if (insertError) {
+                                console.error('로그 삽입 오류:', insertError);
+                                return reject(insertError);
+                            }
+                            resolve();
+                        }
+                    );
+                });
+            }
 
             // 세션에 nextData 저장
             req.session.nextData = selectedTotal;
