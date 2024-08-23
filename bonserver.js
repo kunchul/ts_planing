@@ -1504,7 +1504,37 @@ app.get('/get-current-data', (req, res) => {
 app.post('/calculate-next-dispatch', async (req, res) => {
     const connection = createConnection(dbConfig1); // 데이터베이스 연결 객체 생성
     try {
-        const { currentTotal, SASI } = req.body;
+        const userId = req.session.user.id;
+
+        // 현재 로그인한 유저의 PHONE 값을 가져오기
+        const userPhone = await new Promise((resolve, reject) => {
+            connection.query('SELECT PHONE FROM bon_user WHERE ID = ?', [userId], (err, results) => {
+                if (err || results.length === 0) {
+                    console.error('유저 정보 조회 중 오류:', err);
+                    return reject(err || new Error('유저 정보를 가져올 수 없습니다.'));
+                }
+                resolve(results[0].PHONE);
+            });
+        });
+
+        let { currentTotal } = req.body; // 기존 방식의 currentTotal
+        const { SASI } = req.body;
+
+        // bon_session 테이블에서 PHONE 값이 일치하는 레코드의 TOTAL 값을 가져오기
+        const sessionTotal = await new Promise((resolve, reject) => {
+            connection.query('SELECT TOTAL FROM bon_session WHERE PHONE = ?', [userPhone], (err, results) => {
+                if (err) {
+                    console.error('TOTAL 조회 중 오류:', err);
+                    return reject(err);
+                }
+                resolve(results.length > 0 ? results[0].TOTAL : null);
+            });
+        });
+
+        // 만약 sessionTotal이 존재하면 currentTotal로 사용
+        if (sessionTotal) {
+            currentTotal = sessionTotal;
+        }
 
         if (!currentTotal || !SASI) {
             return res.status(400).json({ message: 'currentTotal 또는 SASI 값이 누락되었습니다.' });
@@ -1713,7 +1743,8 @@ app.post('/start-next-batch', (req, res) => {
                                 return res.status(500).json({ success: false, message: '데이터 업데이트 오류' });
                             }
 
-                            res.json({ success: true, message: 'bon_session이 성공적으로 업데이트되었습니다.' });
+                            // currentTotal 값을 클라이언트에 반환
+                            res.json({ success: true, message: 'bon_session이 성공적으로 업데이트되었습니다.', currentTotal: TOTAL });
                         }
                     );
                 } else {
@@ -1729,7 +1760,8 @@ app.post('/start-next-batch', (req, res) => {
                                 return res.status(500).json({ success: false, message: '데이터 삽입 오류' });
                             }
 
-                            res.json({ success: true, message: 'bon_session이 성공적으로 삽입되었습니다.' });
+                            // currentTotal 값을 클라이언트에 반환
+                            res.json({ success: true, message: 'bon_session이 성공적으로 삽입되었습니다.', currentTotal: TOTAL });
                         }
                     );
                 }
@@ -1737,7 +1769,6 @@ app.post('/start-next-batch', (req, res) => {
         });
     });
 });
-
 
 // 운행 종료를 눌렀을때 -------------------------------------------------------------------------------------------------------------------------------------
 function createConnection(config) {
@@ -2413,6 +2444,5 @@ app.post('/api/search-by-car', (req, res) => {
         res.json(results);
     });
 });
-
 
 
