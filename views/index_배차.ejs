@@ -197,7 +197,7 @@
             </div>
             <div class="row">
                 <button class="btn2" id="endDriving2">운행종료</button>
-                <button class="btn" id="copino">전송요청</button>
+                <button class="btn" id="copino">현재배차 전송</button>
             </div>
             <div class="row">
                 <button class="btn2" id="loadingComplete">상차완료</button>
@@ -224,7 +224,7 @@
                 <div class="cell" id="CON_KU2"></div>
             </div>
             <div class="row">
-                <button class="btn" id="copino2">전송요청</button>
+                <button class="btn" id="copino2">다음배차 전송</button>
             </div>
             <div class="row">
                 <button class="btn2" id="endDriving">운행종료</button>
@@ -287,47 +287,53 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 상차완료 버튼 클릭 이벤트 처리
     document.getElementById('loadingComplete').addEventListener('click', function() {
-        if (!currentTotal || !sasiValue) {
-            console.error('currentTotal 또는 SASI 값이 설정되지 않았습니다.');
-            alert('TOTAL 또는 SASI 값이 설정되지 않았습니다.');
-            return;
+    if (!currentTotal || !sasiValue) {
+        console.error('currentTotal 또는 SASI 값이 설정되지 않았습니다.');
+        alert('TOTAL 또는 SASI 값이 설정되지 않았습니다.');
+        return;
+    }
+
+    clearTimeout(loadingCompleteTimeout); // 상차완료 타이머 클리어
+
+    fetch('/calculate-next-dispatch', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ currentTotal, SASI: sasiValue })
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.text().then(text => { throw new Error(text); });
         }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            document.getElementById('SANG_HA2').innerText = data.nextDispatch.SANG_HA;
+            document.getElementById('CON_NO2').innerText = data.nextDispatch.CON_NO;
+            document.getElementById('CON_KU2').innerText = data.nextDispatch.CON_KU;
+            document.getElementById('nextDispatchSection').style.display = 'block';
 
-        clearTimeout(loadingCompleteTimeout); // 상차완료 타이머 클리어
+            document.getElementById('endDriving2').style.display = 'none';
+            document.getElementById('loadingComplete').style.display = 'none';
+            document.getElementById('unloadingComplete').style.display = 'block';
 
-        fetch('/calculate-next-dispatch', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ currentTotal, SASI: sasiValue })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('SANG_HA2').innerText = data.nextDispatch.SANG_HA;
-                document.getElementById('CON_NO2').innerText = data.nextDispatch.CON_NO;
-                document.getElementById('CON_KU2').innerText = data.nextDispatch.CON_KU;
-                document.getElementById('nextDispatchSection').style.display = 'block';
+            isUnloadingComplete = false; // 다음 배차를 위해 초기화
 
-                document.getElementById('endDriving2').style.display = 'none';
-                document.getElementById('loadingComplete').style.display = 'none';
-                document.getElementById('unloadingComplete').style.display = 'block';
-
-                isUnloadingComplete = false; // 다음 배차를 위해 초기화
-
-                // 하차완료 타이머 시작 (2시간)
-                unloadingCompleteTimeout = setTimeout(function() {
-                    endDriving();
-                }, 2 * 60 * 60 * 1000); // 2시간 후 실행
-            } else {
-                alert(data.message);
-            }
-        })
-        .catch(error => {
-            console.error('다음 배차 계산 중 오류 발생:', error);
-        });
+            // 하차완료 타이머 시작 (3시간)
+            unloadingCompleteTimeout = setTimeout(function() {
+                endDriving();
+            }, 3 * 60 * 60 * 1000); // 2시간 후 실행
+        } else {
+            alert(data.message);
+        }
+    })
+    .catch(error => {
+        console.error('다음 배차 계산 중 오류 발생:', error);
+        alert('배차 계산 중 오류가 발생했습니다. (배차계 문의)');
     });
+});
 
     document.getElementById('unloadingComplete').addEventListener('click', function() {
         console.log("하차 완료 버튼 클릭됨.");
@@ -348,7 +354,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert('하차 완료 처리 되었습니다.');
             } else {
                 console.error('하차 완료 업데이트 실패:', data.message);
-                alert('하차 완료 실패: ' + data.message);
+                alert('하차 완료 실패: 다시 로그인을 시도해주세요. ' + data.message);
             }
         })
         .catch(error => {
