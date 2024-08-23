@@ -293,7 +293,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
     }
 
-    clearTimeout(loadingCompleteTimeout); // 상차완료 타이머 클리어
+    //clearTimeout(loadingCompleteTimeout); // 상차완료 타이머 클리어
 
     fetch('/calculate-next-dispatch', {
         method: 'POST',
@@ -322,9 +322,9 @@ document.addEventListener('DOMContentLoaded', function() {
             isUnloadingComplete = false; // 다음 배차를 위해 초기화
 
             // 하차완료 타이머 시작 (3시간)
-            unloadingCompleteTimeout = setTimeout(function() {
-                endDriving();
-            }, 3 * 60 * 60 * 1000); // 2시간 후 실행
+            //unloadingCompleteTimeout = setTimeout(function() {
+            //    endDriving();
+            //}, 3 * 60 * 60 * 1000); // 2시간 후 실행
         } else {
             alert(data.message);
         }
@@ -468,9 +468,9 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // 상차완료 타이머 시작 (2시간)
-    loadingCompleteTimeout = setTimeout(function() {
-        endDriving();
-    }, 2 * 60 * 60 * 1000); // 2시간 후 실행
+    //loadingCompleteTimeout = setTimeout(function() {
+    //    endDriving();
+    //}, 2 * 60 * 60 * 1000); // 2시간 후 실행
 
     let sessionTimeout;
 
