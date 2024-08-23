@@ -1671,7 +1671,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 });
 
 app.post('/start-next-batch', (req, res) => {
-    const { SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL } = req.session.nextData;
+    const { SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI } = req.session.nextData;
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1); // 데이터베이스 연결 객체 생성
 
@@ -1681,32 +1681,59 @@ app.post('/start-next-batch', (req, res) => {
             return res.status(500).json({ success: false, message: '데이터베이스 연결 오류' });
         }
 
-        // 현재 로그인한 유저의 PHONE 값을 가져오기
-        connection.query('SELECT PHONE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
+        // 현재 로그인한 유저의 PHONE, NAME, CAR 값을 가져오기
+        connection.query('SELECT PHONE, NAME, CAR FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
             if (err || userResults.length === 0) {
                 console.error('유저 정보 조회 중 오류:', err);
                 connection.end();
                 return res.status(500).json({ success: false, message: '유저 정보를 가져올 수 없습니다.' });
             }
 
-            const userPhone = userResults[0].PHONE;
+            const { PHONE: userPhone, NAME: userName, CAR: userCar } = userResults[0];
 
-            // bon_session 테이블에서 PHONE 값이 일치하는 레코드를 업데이트
-            connection.query(`
-                UPDATE bon_session 
-                SET SANG_HA = ?, CON_NO = ?, CON_KU = ?, CON_KG = ?, B_KUM_IN = ?, CON_TEMP = ?, CON_CLASS = ?, TOTAL = ?, DATA_INS = ?
-                WHERE PHONE = ?`,
-                [SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, getCurrentSeoulTime(), userPhone],
-                (err, updateResults) => {
+            // bon_session 테이블에서 PHONE 값이 일치하는 레코드가 있는지 확인
+            connection.query('SELECT * FROM bon_session WHERE PHONE = ?', [userPhone], (err, sessionResults) => {
+                if (err) {
+                    console.error('bon_session 조회 중 오류:', err);
                     connection.end();
-                    if (err) {
-                        console.error('bon_session 업데이트 중 오류:', err);
-                        return res.status(500).json({ success: false, message: '데이터 업데이트 오류' });
-                    }
-
-                    res.json({ success: true, message: 'bon_session이 성공적으로 업데이트되었습니다.' });
+                    return res.status(500).json({ success: false, message: '데이터베이스 조회 오류' });
                 }
-            );
+
+                if (sessionResults.length > 0) {
+                    // PHONE 값이 일치하는 레코드가 있으면 업데이트
+                    connection.query(`
+                        UPDATE bon_session 
+                        SET NAME = ?, CAR = ?, SANG_HA = ?, CON_NO = ?, CON_KU = ?, CON_KG = ?, B_KUM_IN = ?, CON_TEMP = ?, CON_CLASS = ?, TOTAL = ?, SASI = ?, DATA_INS = ?
+                        WHERE PHONE = ?`,
+                        [userName, userCar, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, getCurrentSeoulTime(), userPhone],
+                        (err, updateResults) => {
+                            connection.end();
+                            if (err) {
+                                console.error('bon_session 업데이트 중 오류:', err);
+                                return res.status(500).json({ success: false, message: '데이터 업데이트 오류' });
+                            }
+
+                            res.json({ success: true, message: 'bon_session이 성공적으로 업데이트되었습니다.' });
+                        }
+                    );
+                } else {
+                    // PHONE 값이 일치하는 레코드가 없으면 새 레코드를 삽입
+                    connection.query(`
+                        INSERT INTO bon_session (NAME, CAR, PHONE, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, DATA_INS) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [userName, userCar, userPhone, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, getCurrentSeoulTime()],
+                        (err, insertResults) => {
+                            connection.end();
+                            if (err) {
+                                console.error('bon_session 삽입 중 오류:', err);
+                                return res.status(500).json({ success: false, message: '데이터 삽입 오류' });
+                            }
+
+                            res.json({ success: true, message: 'bon_session이 성공적으로 삽입되었습니다.' });
+                        }
+                    );
+                }
+            });
         });
     });
 });
