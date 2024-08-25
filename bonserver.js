@@ -1506,19 +1506,21 @@ app.post('/calculate-next-dispatch', async (req, res) => {
     try {
         const userId = req.session.user.id;
 
-        // 현재 로그인한 유저의 PHONE 값을 가져오기
-        const userPhone = await new Promise((resolve, reject) => {
-            connection.query('SELECT PHONE FROM bon_user WHERE ID = ?', [userId], (err, results) => {
+        // 현재 로그인한 유저의 PHONE 값과 SASI 값을 가져오기
+        const { userPhone, userSasi } = await new Promise((resolve, reject) => {
+            connection.query('SELECT PHONE, SASI FROM bon_user WHERE ID = ?', [userId], (err, results) => {
                 if (err || results.length === 0) {
                     console.error('유저 정보 조회 중 오류:', err);
                     return reject(err || new Error('유저 정보를 가져올 수 없습니다.'));
                 }
-                resolve(results[0].PHONE);
+                resolve({
+                    userPhone: results[0].PHONE,
+                    userSasi: results[0].SASI
+                });
             });
         });
 
         let { currentTotal } = req.body; // 기존 방식의 currentTotal
-        const { SASI } = req.body;
 
         // bon_session 테이블에서 PHONE 값이 일치하는 레코드의 TOTAL 값을 가져오기
         const sessionTotal = await new Promise((resolve, reject) => {
@@ -1536,13 +1538,13 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             currentTotal = sessionTotal;
         }
 
-        if (!currentTotal || !SASI) {
+        if (!currentTotal || !userSasi) {
             return res.status(400).json({ message: 'currentTotal 또는 SASI 값이 누락되었습니다.' });
         }
 
-        const integerTotal = Math.floor(currentTotal);
-        const currentTotalString = integerTotal.toString();
-        const currentTotalTrimmed = currentTotalString.slice(-3);
+        const integerTotal = Math.floor(currentTotal); // 소수점 이하를 제거한 값
+        const currentTotalString = integerTotal.toString(); // 문자열로 변환
+        const currentTotalTrimmed = currentTotalString.slice(-3); // 마지막 세 자리 추출
 
         console.log(`Received currentTotal: ${currentTotal}`);
         console.log(`Calculated currentTotalTrimmed: ${currentTotalTrimmed}`);
@@ -1573,33 +1575,55 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 
         for (const priority of range) {
             const [min, max] = priority.split('-').map(Number);
-        
-            selectedTotal = await new Promise((resolve, reject) => {
+
+            const possibleTotals = await new Promise((resolve, reject) => {
                 connection.query(`
                     SELECT * 
                     FROM bon_planing_sin 
-                    WHERE CAST(SUBSTRING(TOTAL, -3) AS UNSIGNED) BETWEEN ? AND ? 
+                    WHERE CAST(SUBSTRING(CAST(TOTAL AS UNSIGNED), -3) AS UNSIGNED) BETWEEN ? AND ?
                     AND RESERVE IS NULL
-                    AND ((? = "콤바인샤시" AND MOD(TOTAL, 1) <= 0.5)
-                        OR (? = "라인샤시" AND MOD(TOTAL, 1) = 0))
                     AND (B_BANIP NOT IN ("HOLD", "CANCEL") OR B_BANIP IS NULL)
-                    ORDER BY TOTAL DESC
+                    ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
                     LIMIT 1;
-                `, [min, max, SASI, SASI], (err, result) => {
+                `, [min, max], (err, results) => {
                     if (err) {
                         console.error('쿼리 실행 중 오류:', err);
                         return reject(err);
                     }
-        
-                    if (result.length > 0) {
-                        resolve(result[0]);
-                    } else {
-                        resolve(null);
-                    }
+                    resolve(results);
                 });
             });
-        
-            if (selectedTotal) break; // 배차가 선택되면 반복문을 종료합니다.
+
+            // 쿼리 외부에서 조건을 적용하여 필터링
+            possibleTotals.forEach(row => {
+                const totalValueStr = String(row.TOTAL).split('.')[0];
+                const totalRightThree = totalValueStr.slice(-3);
+                const totalRightThreeNum = parseInt(totalRightThree, 10);
+                const totalValue = parseInt(totalValueStr, 10);
+            
+                console.log(`Processing row: TOTAL=${row.TOTAL}, totalRightThreeNum=${totalRightThreeNum}, totalValue=${totalValue}`);
+            
+                // 특정 조건에 따른 선택 로직
+                if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
+                    if (userSasi === "콤바인샤시" && (row.TOTAL % 1 <= 0.5 || row.TOTAL % 1 === 0)) {
+                        console.log(`Match found for 콤바인샤시: TOTAL=${row.TOTAL}`);
+                        if (!selectedTotal || parseFloat(row.TOTAL) > parseFloat(selectedTotal.TOTAL)) {
+                            selectedTotal = row;
+                        }
+                    } else if (userSasi === "라인샤시" && row.TOTAL % 1 === 0) {
+                        console.log(`Match found for 라인샤시: TOTAL=${row.TOTAL}`);
+                        if (!selectedTotal || parseFloat(row.TOTAL) > parseFloat(selectedTotal.TOTAL)) {
+                            selectedTotal = row;
+                        }
+                    }
+                }
+            });
+            
+            if (!selectedTotal) {
+                console.error('No suitable dispatch found after filtering.');
+            }
+            
+            if (selectedTotal) break; // 조건에 맞는 배차가 선택되면 반복문 종료
         }
 
         if (selectedTotal) {
