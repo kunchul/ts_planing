@@ -30,6 +30,7 @@ app.use(session({
     secret: 'your_secret_key',
     resave: false,
     saveUninitialized: false,
+    rolling: true, 
     cookie: {
         secure: false,
         httpOnly: true,
