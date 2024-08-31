@@ -11,9 +11,15 @@ const path = require('path');
 const session = require('express-session');
 const moment = require('moment-timezone');
 const { v4: uuidv4 } = require('uuid');
+const RedisStore = require('connect-redis').default;
+const Redis = require('ioredis');
 
 
-
+const redisClient = new Redis({
+    host: 'svc.sel5.cloudtype.app', // Redis 서버의 호스트를 설정합니다.
+    port: 31098,        // Redis 서버의 포트를 설정합니다.
+    password: 'rjscjf0739', // Redis에 비밀번호가 설정된 경우 추가합니다.
+});
 
 // 대한민국 서울 시간대로 현재 시간을 설정하는 함수
 function getCurrentSeoulTime() {
@@ -27,19 +33,18 @@ function getCurrentSeoulTime2() {
 }
 
 app.use(session({
-    secret: 'your_secret_key',
-    resave: false,
-    saveUninitialized: false,
-    rolling: true, 
+    store: new RedisStore({ client: redisClient }), // Redis 클라이언트를 세션 스토어로 설정
+    secret: 'your_secret_key', // 세션 암호화 키를 설정합니다.
+    resave: false, // 세션이 변경되지 않아도 저장할지 여부를 설정합니다.
+    saveUninitialized: false, // 초기화되지 않은 세션을 저장할지 여부를 설정합니다.
+    rolling: true, // 사용자의 요청이 있을 때마다 세션 만료 시간을 갱신합니다.
     cookie: {
-        secure: false,
-        httpOnly: true,
-        maxAge: 12 * 60 * 60 * 1000,
-        sameSite: 'Lax'
+        secure: false, // HTTPS 환경에서만 쿠키가 전송되도록 설정 (HTTPS 사용 시 true로 변경)
+        httpOnly: true, // 클라이언트 측에서 쿠키에 접근할 수 없도록 설정합니다.
+        maxAge: 12 * 60 * 60 * 1000, // 쿠키의 만료 시간 (12시간으로 설정)
+        sameSite: 'Lax' // 쿠키의 sameSite 속성을 설정합니다.
     }
 }));
-
-let activeSessions = {};
 
 
 
@@ -79,6 +84,7 @@ function startNewSession(req, res, user, connection) {
 // 세션 확인 미들웨어 (로그인 중인 세션을 검증하고 다른 세션을 무효화)
 app.use((req, res, next) => {
     if (req.session && req.session.user) {
+
         const connection = mysql.createConnection(dbConfig1);
         const currentUserId = req.session.user.id;
         const currentSessionId = req.sessionID;
@@ -110,6 +116,7 @@ app.use((req, res, next) => {
     }
 });
 
+const activeSessions = {};
 
 io.on('connection', (socket) => {
     socket.on('registerSession', (sessionID) => {
@@ -570,13 +577,13 @@ app.post('/handle-back-button', (req, res) => {
         if (results.length > 0) {
             const car = results[0].CAR;
 
-            // DELETE 쿼리 실행
-            connection.query('DELETE FROM bon_carplayer WHERE CAR = ? AND `ON` IS NOT NULL AND `OFF` IS NULL', [car], (deleteErr) => {
-                if (deleteErr) {
-                    console.error('Error deleting data: ', deleteErr);
-                    connection.end();
-                    return res.status(500).send('Internal Server Error');
-                }
+            // // DELETE 쿼리 실행
+            // connection.query('DELETE FROM bon_carplayer WHERE CAR = ? AND `ON` IS NOT NULL AND `OFF` IS NULL', [car], (deleteErr) => {
+            //     if (deleteErr) {
+            //         console.error('Error deleting data: ', deleteErr);
+            //         connection.end();
+            //         return res.status(500).send('Internal Server Error');
+            //     }
 
                 // session_id 업데이트 쿼리 실행
                 connection.query('UPDATE bon_user SET session_id = ? WHERE ID = ?', [sessionId, userId], (updateErr) => {
@@ -592,7 +599,7 @@ app.post('/handle-back-button', (req, res) => {
                     connection.end();
                     res.json({ success: true, redirectTo: req.session.returnTo });
                 });
-            });
+            // });
         } else {
             connection.end();
             res.status(404).send('User not found');
@@ -683,13 +690,13 @@ app.post('/handle-back-button2-1', (req, res) => {
         if (results.length > 0) {
             const car = results[0].CAR;
 
-            // DELETE 쿼리 실행
-            connection.query('DELETE FROM bon_carplayer WHERE CAR = ? AND `ON` IS NOT NULL AND `OFF` IS NULL', [car], (deleteErr) => {
-                if (deleteErr) {
-                    console.error('Error deleting data: ', deleteErr);
-                    connection.end();
-                    return res.status(500).send('Internal Server Error');
-                }
+            // // DELETE 쿼리 실행
+            // connection.query('DELETE FROM bon_carplayer WHERE CAR = ? AND `ON` IS NOT NULL AND `OFF` IS NULL', [car], (deleteErr) => {
+            //     if (deleteErr) {
+            //         console.error('Error deleting data: ', deleteErr);
+            //         connection.end();
+            //         return res.status(500).send('Internal Server Error');
+            //     }
 
                 // session_id 업데이트 쿼리 실행
                 connection.query('UPDATE bon_user SET session_id = ? WHERE ID = ?', [sessionId, userId], (updateErr) => {
@@ -704,7 +711,7 @@ app.post('/handle-back-button2-1', (req, res) => {
 
                     connection.end();
                     res.json({ success: true, redirectTo: req.session.returnTo });
-                });
+                // });
             });
         } else {
             connection.end();
@@ -1726,6 +1733,13 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 });
 
 app.post('/start-next-batch', (req, res) => {
+    if (!req.session || !req.session.user) {
+        return res.status(401).json({ message: '사용자 세션이 없습니다.' });
+    }
+
+    if (!req.session.nextData) {
+        return res.status(400).json({ message: 'nextData가 세션에 없습니다.' });
+    }
     const { SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI } = req.session.nextData;
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1); // 데이터베이스 연결 객체 생성
