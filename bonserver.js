@@ -1528,8 +1528,6 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             });
         });
 
-        let { currentTotal } = req.body; // 기존 방식의 currentTotal
-
         // bon_session 테이블에서 PHONE 값이 일치하는 레코드의 TOTAL 값을 가져오기
         const sessionTotal = await new Promise((resolve, reject) => {
             connection.query('SELECT TOTAL FROM bon_session WHERE PHONE = ?', [userPhone], (err, results) => {
@@ -1541,10 +1539,8 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             });
         });
 
-        // 만약 sessionTotal이 존재하면 currentTotal로 사용
-        if (sessionTotal) {
-            currentTotal = sessionTotal;
-        }
+        // sessionTotal 값을 무조건 currentTotal로 사용
+        let currentTotal = sessionTotal;
 
         if (!currentTotal || !userSasi) {
             return res.status(400).json({ message: 'currentTotal 또는 SASI 값이 누락되었습니다.' });
@@ -1557,6 +1553,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         console.log(`Received currentTotal: ${currentTotal}`);
         console.log(`Calculated currentTotalTrimmed: ${currentTotalTrimmed}`);
 
+        // 우선순위 필터링 범위 정의
         const priorityRanges = {
             '052-058': ['072-078', '092-100', '102-110', '052-058', '012-019', '032-038'],
             '072-078': ['052-058', '092-100', '102-110', '072-078', '012-019', '032-038'],
@@ -1581,6 +1578,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 
         let selectedTotal = null;
 
+        // 각 우선순위 범위에 따라 필터링하여 선택
         for (const priority of range) {
             const [min, max] = priority.split('-').map(Number);
 
@@ -1602,36 +1600,11 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                 });
             });
 
-            // 쿼리 외부에서 조건을 적용하여 필터링
-            possibleTotals.forEach(row => {
-                const totalValueStr = String(row.TOTAL).split('.')[0];
-                const totalRightThree = totalValueStr.slice(-3);
-                const totalRightThreeNum = parseInt(totalRightThree, 10);
-                const totalValue = parseInt(totalValueStr, 10);
-            
-                console.log(`Processing row: TOTAL=${row.TOTAL}, totalRightThreeNum=${totalRightThreeNum}, totalValue=${totalValue}`);
-            
-                // 특정 조건에 따른 선택 로직
-                if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
-                    if (userSasi === "콤바인샤시" && (row.TOTAL % 1 <= 0.5 || row.TOTAL % 1 === 0)) {
-                        console.log(`Match found for 콤바인샤시: TOTAL=${row.TOTAL}`);
-                        if (!selectedTotal || parseFloat(row.TOTAL) > parseFloat(selectedTotal.TOTAL)) {
-                            selectedTotal = row;
-                        }
-                    } else if (userSasi === "라인샤시" && row.TOTAL % 1 === 0) {
-                        console.log(`Match found for 라인샤시: TOTAL=${row.TOTAL}`);
-                        if (!selectedTotal || parseFloat(row.TOTAL) > parseFloat(selectedTotal.TOTAL)) {
-                            selectedTotal = row;
-                        }
-                    }
-                }
-            });
-            
-            if (!selectedTotal) {
-                console.error('No suitable dispatch found after filtering.');
+            if (possibleTotals.length > 0) {
+                // 필터링된 값이 있으면 우선 선택
+                selectedTotal = possibleTotals[0];
+                break; // 조건에 맞는 배차가 선택되면 반복문 종료
             }
-            
-            if (selectedTotal) break; // 조건에 맞는 배차가 선택되면 반복문 종료
         }
 
         if (selectedTotal) {
@@ -2483,5 +2456,4 @@ app.post('/api/search-by-car', (req, res) => {
         res.json(results);
     });
 });
-
 
