@@ -171,10 +171,34 @@ const dbConfig2 = {
     charset: 'utf8mb4'
 };
 
+function handleDisconnect(connection) {
+    connection.on('error', function (err) {
+        if (!err.fatal) {
+            return;
+        }
 
+        if (err.code === 'PROTOCOL_CONNECTION_LOST') {
+            console.error('Reconnecting lost connection: ', err.stack);
+            // 재연결 시도
+            connection = createConnection(connection.config); // 기존 설정을 사용해 새 연결
+            handleDisconnect(connection); // 새 연결에 대해 재연결 로직 다시 설정
+            connection.connect(function (error) {
+                if (error) {
+                    console.error('Error reconnecting: ', error.stack);
+                } else {
+                    console.log('Reconnected to the database.');
+                }
+            });
+        } else {
+            console.error('Unknown database error: ', err.stack);
+        }
+    });
+}
 
 function createConnection(dbConfig) {
-    return mysql.createConnection(dbConfig);
+    const connection = mysql.createConnection(dbConfig);
+    handleDisconnect(connection); // 연결 생성 시 재연결 로직 설정
+    return connection;
 }
 
 // 역할 검사를 위한 미들웨어 함수
@@ -1650,33 +1674,10 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                 });
             });
 
-            // 필터링된 결과에 따라 콤바인샤시와 라인샤시 처리
             if (possibleTotals.length > 0) {
-                possibleTotals.forEach(row => {
-                    const totalValueStr = String(Math.floor(row.TOTAL));
-                    const totalRightThree = totalValueStr.slice(-3);
-                    const totalRightThreeNum = parseInt(totalRightThree, 10);
-                    const totalValue = parseInt(totalValueStr, 10);
-
-                    // 특정 조건에 따른 선택 로직
-                    if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
-                        if (userSasi === "콤바인샤시") {
-                            console.log(`Match found for 콤바인샤시: TOTAL=${row.TOTAL}`);
-                            if (!selectedTotal || parseFloat(row.TOTAL) > parseFloat(selectedTotal.TOTAL)) {
-                                selectedTotal = row;
-                            }
-                        } else if (userSasi === "라인샤시" && row.TOTAL % 1 === 0) {
-                            console.log(`Match found for 라인샤시: TOTAL=${row.TOTAL}`);
-                            if (!selectedTotal || parseFloat(row.TOTAL) > parseFloat(selectedTotal.TOTAL)) {
-                                selectedTotal = row;
-                            }
-                        }
-                    }
-                });
-
-                if (selectedTotal) {
-                    break; // 조건에 맞는 배차가 선택되면 반복문 종료
-                }
+                // 필터링된 값이 있으면 우선 선택
+                selectedTotal = possibleTotals[0];
+                break; // 조건에 맞는 배차가 선택되면 반복문 종료
             }
         }
 
