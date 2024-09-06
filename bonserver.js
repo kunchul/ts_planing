@@ -2241,7 +2241,7 @@ app.post('/delete-order', (req, res) => {
                         `;
 
                         // t_baecha 테이블 업데이트
-                        connection.query(sqlUpdateTbaechaQuery, bIdxValues, (updateTbaechaError, updateTbaechaResults) => {
+                        connection2.query(sqlUpdateTbaechaQuery, bIdxValues, (updateTbaechaError, updateTbaechaResults) => {
                             if (updateTbaechaError) {
                                 console.error('t_baecha 업데이트 중 오류:', updateTbaechaError);
                                 return connection.rollback(() => {
