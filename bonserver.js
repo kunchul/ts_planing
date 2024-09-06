@@ -945,6 +945,32 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1);
 
+    // 재시도 로직 함수
+    const updateWithRetry = async (connection, conNo, retries = 5) => {
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                await new Promise((resolve, reject) => {
+                    connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE CON_NO = ?`, [conNo], (err) => {
+                        if (err) {
+                            if (err.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                                console.log(`Lock wait timeout exceeded. Retrying... (${attempt + 1}/${retries})`);
+                                return reject('Timeout, retrying...');
+                            }
+                            return reject(err);
+                        }
+                        resolve();
+                    });
+                });
+                return; // 성공 시 종료
+            } catch (err) {
+                if (attempt === retries - 1) {
+                    throw err; // 최대 재시도 횟수 초과 시 오류 발생
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000)); // 1초 대기 후 재시도
+            }
+        }
+    };
+
     connection.query('SELECT CAR, SASI, NAME, ROLE, PHONE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
         if (err || userResults.length === 0) {
             console.error('bon_user 데이터 조회 중 오류:', err);
@@ -1074,6 +1100,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
         }
     
         const selectedSangHa = row.SANG_HA;
+        
     
         // bon_session 테이블에 데이터 삽입
         connection.query(
@@ -1087,17 +1114,9 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                     return res.status(500).send('내부 서버 오류');
                 }
     
-                // 삽입 후 bon_planing_sin 테이블의 RESERVE 값을 업데이트
-                connection.query(
-                    'UPDATE bon_planing_sin SET RESERVE = "Y" WHERE CON_NO = ?',
-                    [row.CON_NO],
-                    (err) => {
-                        if (err) {
-                            console.error('bon_planing_sin 업데이트 중 오류:', err);
-                            connection.end();
-                            return res.status(500).send('내부 서버 오류');
-                        }
-    
+                // 삽입 후 bon_planing_sin 테이블의 RESERVE 값을 재시도 로직을 통해 업데이트
+                updateWithRetry(connection, row.CON_NO)
+                    .then(() => {
                         req.session.assignedData = {
                             assignedTotal: row.TOTAL,
                             currentData: {
@@ -1113,8 +1132,12 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                         };
     
                         finalizeResponse();
-                    }
-                );
+                    })
+                    .catch((err) => {
+                        console.error('bon_planing_sin 업데이트 중 오류:', err);
+                        connection.end();
+                        return res.status(500).send('내부 서버 오류');
+                    });
             }
         );
     }
@@ -1511,6 +1534,33 @@ app.get('/get-current-data', (req, res) => {
 //다음배차
 app.post('/calculate-next-dispatch', async (req, res) => {
     const connection = createConnection(dbConfig1); // 데이터베이스 연결 객체 생성
+
+    // 재시도 로직 함수
+    const updateWithRetry = async (connection, bIdx, retries = 5) => {
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                await new Promise((resolve, reject) => {
+                    connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [bIdx], (err) => {
+                        if (err) {
+                            if (err.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                                console.log(`Lock wait timeout exceeded. Retrying... (${attempt + 1}/${retries})`);
+                                return reject('Timeout, retrying...');
+                            }
+                            return reject(err);
+                        }
+                        resolve();
+                    });
+                });
+                return; // 성공적으로 업데이트되면 종료
+            } catch (err) {
+                if (attempt === retries - 1) {
+                    throw err; // 최대 재시도 횟수 초과 시 오류 발생
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000)); // 1초 대기 후 재시도
+            }
+        }
+    };
+
     try {
         const userId = req.session.user.id;
 
@@ -1608,15 +1658,8 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         }
 
         if (selectedTotal) {
-            await new Promise((resolve, reject) => {
-                connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [selectedTotal.B_IDX], (err) => {
-                    if (err) {
-                        console.error('RESERVE 업데이트 중 오류:', err);
-                        return reject(err);
-                    }
-                    resolve();
-                });
-            });
+            // 재시도 로직을 적용한 업데이트 함수 사용
+            await updateWithRetry(connection, selectedTotal.B_IDX);
 
             const { B_IDX } = selectedTotal;
 
@@ -2153,69 +2196,103 @@ app.post('/delete-order', (req, res) => {
     const sqlSelectBIdxQuery = `SELECT B_IDX FROM bon_planing_sin WHERE CON_NO IN (${placeholders})`;
     const sqlDeleteSessionQuery = `DELETE FROM bon_session WHERE CON_NO IN (${placeholders})`;
 
-    // bon_planing_sin 테이블 업데이트
-    queryWithReconnect(dbConfig1, sqlUpdateQuery, containerIds, (updateError, updateResults) => {
-        if (updateError) {
-            console.error('데이터베이스 업데이트 쿼리 오류:', updateError);
-            return res.status(500).send('데이터베이스 업데이트 쿼리 오류가 발생했습니다.');
+    const connection = createConnection(dbConfig1);
+    
+    connection.beginTransaction((err) => {
+        if (err) {
+            console.error('트랜잭션 시작 중 오류:', err);
+            return res.status(500).send('트랜잭션 시작 중 오류가 발생했습니다.');
         }
 
-        // bon_log 테이블에서 삭제
-        queryWithReconnect(dbConfig1, sqlDeleteQuery, containerIds, (deleteError, deleteResults) => {
-            if (deleteError) {
-                console.error('데이터베이스 삭제 쿼리 오류:', deleteError);
-                return res.status(500).send('데이터베이스 삭제 쿼리 오류가 발생했습니다.');
+        // bon_planing_sin 테이블 업데이트
+        connection.query(sqlUpdateQuery, containerIds, (updateError, updateResults) => {
+            if (updateError) {
+                console.error('bon_planing_sin 업데이트 중 오류:', updateError);
+                return connection.rollback(() => {
+                    res.status(500).send('bon_planing_sin 업데이트 중 오류가 발생했습니다.');
+                });
             }
 
-            // B_IDX 값 조회
-            queryWithReconnect(dbConfig1, sqlSelectBIdxQuery, containerIds, (selectError, selectResults) => {
-                if (selectError) {
-                    console.error('데이터베이스 조회 쿼리 오류:', selectError);
-                    return res.status(500).send('데이터베이스 조회 쿼리 오류가 발생했습니다.');
+            // bon_log 테이블 삭제
+            connection.query(sqlDeleteQuery, containerIds, (deleteError, deleteResults) => {
+                if (deleteError) {
+                    console.error('bon_log 삭제 중 오류:', deleteError);
+                    return connection.rollback(() => {
+                        res.status(500).send('bon_log 삭제 중 오류가 발생했습니다.');
+                    });
                 }
 
-                if (selectResults.length > 0) {
-                    const bIdxValues = selectResults.map(row => row.B_IDX);
-                    const bIdxPlaceholders = bIdxValues.map(() => '?').join(',');
+                // B_IDX 조회
+                connection.query(sqlSelectBIdxQuery, containerIds, (selectError, selectResults) => {
+                    if (selectError) {
+                        console.error('B_IDX 조회 중 오류:', selectError);
+                        return connection.rollback(() => {
+                            res.status(500).send('B_IDX 조회 중 오류가 발생했습니다.');
+                        });
+                    }
 
-                    const sqlUpdateTbaechaQuery = `
-                        UPDATE t_baecha 
-                        SET B_DATE = NULL, B_CAR = NULL, B_DRIVER = NULL, B_CAR_ID = NULL, C_IDX_IN = NULL 
-                        WHERE B_IDX IN (${bIdxPlaceholders}) AND B_DEL != 'Y'
-                    `;
+                    if (selectResults.length > 0) {
+                        const bIdxValues = selectResults.map(row => row.B_IDX);
+                        const bIdxPlaceholders = bIdxValues.map(() => '?').join(',');
+                        const sqlUpdateTbaechaQuery = `
+                            UPDATE t_baecha 
+                            SET B_DATE = NULL, B_CAR = NULL, B_DRIVER = NULL, B_CAR_ID = NULL, C_IDX_IN = NULL 
+                            WHERE B_IDX IN (${bIdxPlaceholders}) AND B_DEL != 'Y'
+                        `;
 
-                    // t_baecha 테이블 업데이트
-                    queryWithReconnect(dbConfig2, sqlUpdateTbaechaQuery, bIdxValues, (updateTbaechaError, updateTbaechaResults) => {
-                        if (updateTbaechaError) {
-                            console.error('t_baecha 테이블 업데이트 중 오류:', updateTbaechaError);
-                            return res.status(500).send('t_baecha 테이블 업데이트 중 오류가 발생했습니다.');
-                        }
-
-                        // bon_session에서 삭제
-                        queryWithReconnect(dbConfig1, sqlDeleteSessionQuery, containerIds, (deleteSessionError, deleteSessionResults) => {
-                            if (deleteSessionError) {
-                                console.error('bon_session 삭제 중 오류 발생:', deleteSessionError);
-                                return res.status(500).send('bon_session 삭제 중 오류가 발생했습니다.');
+                        // t_baecha 테이블 업데이트
+                        connection.query(sqlUpdateTbaechaQuery, bIdxValues, (updateTbaechaError, updateTbaechaResults) => {
+                            if (updateTbaechaError) {
+                                console.error('t_baecha 업데이트 중 오류:', updateTbaechaError);
+                                return connection.rollback(() => {
+                                    res.status(500).send('t_baecha 업데이트 중 오류가 발생했습니다.');
+                                });
                             }
 
-                            res.send({
-                                message: `${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되고, ${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었으며, ${updateTbaechaResults.affectedRows}개의 행이 t_baecha에서 업데이트되었고, ${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`
+                            // bon_session 삭제
+                            connection.query(sqlDeleteSessionQuery, containerIds, (deleteSessionError, deleteSessionResults) => {
+                                if (deleteSessionError) {
+                                    console.error('bon_session 삭제 중 오류:', deleteSessionError);
+                                    return connection.rollback(() => {
+                                        res.status(500).send('bon_session 삭제 중 오류가 발생했습니다.');
+                                    });
+                                }
+
+                                connection.commit((commitError) => {
+                                    if (commitError) {
+                                        return connection.rollback(() => {
+                                            res.status(500).send('커밋 중 오류가 발생했습니다.');
+                                        });
+                                    }
+                                    res.send({
+                                        message: `${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되었고, ${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었으며, ${updateTbaechaResults.affectedRows}개의 행이 t_baecha에서 업데이트되었고, ${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`
+                                    });
+                                });
                             });
                         });
-                    });
-                } else {
-                    // B_IDX가 없는 경우에도 bon_session 테이블에서 삭제
-                    queryWithReconnect(dbConfig1, sqlDeleteSessionQuery, containerIds, (deleteSessionError, deleteSessionResults) => {
-                        if (deleteSessionError) {
-                            console.error('bon_session 삭제 중 오류 발생:', deleteSessionError);
-                            return res.status(500).send('bon_session 삭제 중 오류가 발생했습니다.');
-                        }
+                    } else {
+                        // B_IDX가 없는 경우 bon_session 삭제
+                        connection.query(sqlDeleteSessionQuery, containerIds, (deleteSessionError, deleteSessionResults) => {
+                            if (deleteSessionError) {
+                                console.error('bon_session 삭제 중 오류:', deleteSessionError);
+                                return connection.rollback(() => {
+                                    res.status(500).send('bon_session 삭제 중 오류가 발생했습니다.');
+                                });
+                            }
 
-                        res.send({
-                            message: `${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되고, ${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었으며, ${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`
+                            connection.commit((commitError) => {
+                                if (commitError) {
+                                    return connection.rollback(() => {
+                                        res.status(500).send('커밋 중 오류가 발생했습니다.');
+                                    });
+                                }
+                                res.send({
+                                    message: `${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되었고, ${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었으며, ${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`
+                                });
+                            });
                         });
-                    });
-                }
+                    }
+                });
             });
         });
     });
@@ -2238,29 +2315,55 @@ app.post('/delete-container2', (req, res) => {
     const sqlDeletePlanning = `DELETE FROM bon_planing_sin WHERE CON_NO IN (${placeholders})`;
     const sqlDeleteSession = `DELETE FROM bon_session WHERE CON_NO IN (${placeholders})`;
 
-    // 첫 번째 쿼리: bon_log 테이블에서 삭제
-    queryWithReconnect(dbConfig1, sqlDeleteLog, containerIds, (error, results) => {
-        if (error) {
-            console.error('데이터베이스 쿼리 오류:', error);
-            return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
+    const connection = createConnection(dbConfig1); // MySQL 연결 생성
+
+    // 트랜잭션 시작
+    connection.beginTransaction((transactionError) => {
+        if (transactionError) {
+            console.error('트랜잭션 시작 중 오류:', transactionError);
+            return res.status(500).send('트랜잭션 시작 중 오류가 발생했습니다.');
         }
 
-        // 두 번째 쿼리: bon_planing_sin 테이블에서 삭제
-        queryWithReconnect(dbConfig1, sqlDeletePlanning, containerIds, (deleteError, deleteResults) => {
-            if (deleteError) {
-                console.error('데이터베이스 쿼리 오류:', deleteError);
-                return res.status(500).send('데이터베이스 쿼리 오류가 발생했습니다.');
+        // 첫 번째 쿼리: bon_log 테이블에서 삭제
+        connection.query(sqlDeleteLog, containerIds, (error, results) => {
+            if (error) {
+                console.error('bon_log 삭제 중 오류:', error);
+                return connection.rollback(() => {
+                    res.status(500).send('bon_log 삭제 중 오류가 발생했습니다.');
+                });
             }
 
-            // 세 번째 쿼리: bon_session 테이블에서 삭제
-            queryWithReconnect(dbConfig1, sqlDeleteSession, containerIds, (deleteSessionError, deleteSessionResults) => {
-                if (deleteSessionError) {
-                    console.error('bon_session 삭제 중 오류 발생:', deleteSessionError);
-                    return res.status(500).send('bon_session 삭제 중 오류가 발생했습니다.');
+            // 두 번째 쿼리: bon_planing_sin 테이블에서 삭제
+            connection.query(sqlDeletePlanning, containerIds, (deleteError, deleteResults) => {
+                if (deleteError) {
+                    console.error('bon_planing_sin 삭제 중 오류:', deleteError);
+                    return connection.rollback(() => {
+                        res.status(500).send('bon_planing_sin 삭제 중 오류가 발생했습니다.');
+                    });
                 }
 
-                res.send({
-                    message: `${results.affectedRows}개의 행이 본선로그에서 삭제되었고, ${deleteResults.affectedRows}개의 행이 플래닝페이지에서 삭제되었으며, ${deleteSessionResults.affectedRows}개의 행이 세션 테이블에서 삭제되었습니다.`
+                // 세 번째 쿼리: bon_session 테이블에서 삭제
+                connection.query(sqlDeleteSession, containerIds, (deleteSessionError, deleteSessionResults) => {
+                    if (deleteSessionError) {
+                        console.error('bon_session 삭제 중 오류 발생:', deleteSessionError);
+                        return connection.rollback(() => {
+                            res.status(500).send('bon_session 삭제 중 오류가 발생했습니다.');
+                        });
+                    }
+
+                    // 모든 쿼리가 성공하면 커밋
+                    connection.commit((commitError) => {
+                        if (commitError) {
+                            console.error('커밋 중 오류 발생:', commitError);
+                            return connection.rollback(() => {
+                                res.status(500).send('커밋 중 오류가 발생했습니다.');
+                            });
+                        }
+
+                        res.send({
+                            message: `${results.affectedRows}개의 행이 bon_log에서 삭제되었고, ${deleteResults.affectedRows}개의 행이 bon_planing_sin에서 삭제되었으며, ${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`
+                        });
+                    });
                 });
             });
         });
