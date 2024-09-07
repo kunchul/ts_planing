@@ -2243,7 +2243,8 @@ app.post('/delete-order', (req, res) => {
     const sqlDeleteSessionQuery = `DELETE FROM bon_session WHERE CON_NO IN (${placeholders})`;
 
     const connection = createConnection(dbConfig1);
-    
+    const connection2 = createConnection(dbConfig2);
+
     connection.beginTransaction((err) => {
         if (err) {
             console.error('트랜잭션 시작 중 오류:', err);
@@ -2255,6 +2256,7 @@ app.post('/delete-order', (req, res) => {
             if (updateError) {
                 console.error('bon_planing_sin 업데이트 중 오류:', updateError);
                 return connection.rollback(() => {
+                    connection.end();
                     res.status(500).send('bon_planing_sin 업데이트 중 오류가 발생했습니다.');
                 });
             }
@@ -2264,6 +2266,7 @@ app.post('/delete-order', (req, res) => {
                 if (deleteError) {
                     console.error('bon_log 삭제 중 오류:', deleteError);
                     return connection.rollback(() => {
+                        connection.end();
                         res.status(500).send('bon_log 삭제 중 오류가 발생했습니다.');
                     });
                 }
@@ -2273,6 +2276,7 @@ app.post('/delete-order', (req, res) => {
                     if (selectError) {
                         console.error('B_IDX 조회 중 오류:', selectError);
                         return connection.rollback(() => {
+                            connection.end();
                             res.status(500).send('B_IDX 조회 중 오류가 발생했습니다.');
                         });
                     }
@@ -2291,6 +2295,8 @@ app.post('/delete-order', (req, res) => {
                             if (updateTbaechaError) {
                                 console.error('t_baecha 업데이트 중 오류:', updateTbaechaError);
                                 return connection.rollback(() => {
+                                    connection.end();
+                                    connection2.end();
                                     res.status(500).send('t_baecha 업데이트 중 오류가 발생했습니다.');
                                 });
                             }
@@ -2300,6 +2306,8 @@ app.post('/delete-order', (req, res) => {
                                 if (deleteSessionError) {
                                     console.error('bon_session 삭제 중 오류:', deleteSessionError);
                                     return connection.rollback(() => {
+                                        connection.end();
+                                        connection2.end();
                                         res.status(500).send('bon_session 삭제 중 오류가 발생했습니다.');
                                     });
                                 }
@@ -2307,9 +2315,14 @@ app.post('/delete-order', (req, res) => {
                                 connection.commit((commitError) => {
                                     if (commitError) {
                                         return connection.rollback(() => {
+                                            connection.end();
+                                            connection2.end();
                                             res.status(500).send('커밋 중 오류가 발생했습니다.');
                                         });
                                     }
+
+                                    connection.end();
+                                    connection2.end();
                                     res.send({
                                         message: `${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되었고, ${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었으며, ${updateTbaechaResults.affectedRows}개의 행이 t_baecha에서 업데이트되었고, ${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`
                                     });
@@ -2322,6 +2335,7 @@ app.post('/delete-order', (req, res) => {
                             if (deleteSessionError) {
                                 console.error('bon_session 삭제 중 오류:', deleteSessionError);
                                 return connection.rollback(() => {
+                                    connection.end();
                                     res.status(500).send('bon_session 삭제 중 오류가 발생했습니다.');
                                 });
                             }
@@ -2329,9 +2343,12 @@ app.post('/delete-order', (req, res) => {
                             connection.commit((commitError) => {
                                 if (commitError) {
                                     return connection.rollback(() => {
+                                        connection.end();
                                         res.status(500).send('커밋 중 오류가 발생했습니다.');
                                     });
                                 }
+
+                                connection.end();
                                 res.send({
                                     message: `${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되었고, ${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었으며, ${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`
                                 });
@@ -2367,6 +2384,7 @@ app.post('/delete-container2', (req, res) => {
     connection.beginTransaction((transactionError) => {
         if (transactionError) {
             console.error('트랜잭션 시작 중 오류:', transactionError);
+            connection.end(); // 연결 종료
             return res.status(500).send('트랜잭션 시작 중 오류가 발생했습니다.');
         }
 
@@ -2375,6 +2393,7 @@ app.post('/delete-container2', (req, res) => {
             if (error) {
                 console.error('bon_log 삭제 중 오류:', error);
                 return connection.rollback(() => {
+                    connection.end(); // 연결 종료
                     res.status(500).send('bon_log 삭제 중 오류가 발생했습니다.');
                 });
             }
@@ -2384,6 +2403,7 @@ app.post('/delete-container2', (req, res) => {
                 if (deleteError) {
                     console.error('bon_planing_sin 삭제 중 오류:', deleteError);
                     return connection.rollback(() => {
+                        connection.end(); // 연결 종료
                         res.status(500).send('bon_planing_sin 삭제 중 오류가 발생했습니다.');
                     });
                 }
@@ -2393,6 +2413,7 @@ app.post('/delete-container2', (req, res) => {
                     if (deleteSessionError) {
                         console.error('bon_session 삭제 중 오류 발생:', deleteSessionError);
                         return connection.rollback(() => {
+                            connection.end(); // 연결 종료
                             res.status(500).send('bon_session 삭제 중 오류가 발생했습니다.');
                         });
                     }
@@ -2402,10 +2423,13 @@ app.post('/delete-container2', (req, res) => {
                         if (commitError) {
                             console.error('커밋 중 오류 발생:', commitError);
                             return connection.rollback(() => {
+                                connection.end(); // 연결 종료
                                 res.status(500).send('커밋 중 오류가 발생했습니다.');
                             });
                         }
 
+                        // 성공적으로 커밋된 후 연결 종료
+                        connection.end(); // 연결 종료
                         res.send({
                             message: `${results.affectedRows}개의 행이 bon_log에서 삭제되었고, ${deleteResults.affectedRows}개의 행이 bon_planing_sin에서 삭제되었으며, ${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`
                         });
