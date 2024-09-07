@@ -1676,25 +1676,24 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 
             // 쿼리 외부에서 조건을 적용하여 필터링
             possibleTotals.forEach(row => {
-                const totalValueStr = String(row.TOTAL).split('.')[0];
-                const totalRightThree = totalValueStr.slice(-3);
-                const totalRightThreeNum = parseInt(totalRightThree, 10);
-                const totalValue = parseInt(totalValueStr, 10);
-
+                const totalValueStr = String(row.TOTAL).split('.')[0]; // TOTAL의 정수 부분 추출
+                const totalRightThree = totalValueStr.slice(-3); // TOTAL 값의 마지막 세 자리 추출
+                const totalRightThreeNum = parseInt(totalRightThree, 10); // 마지막 세 자리를 정수로 변환
+                const totalValue = parseInt(totalValueStr, 10); // TOTAL 값의 정수 부분을 정수로 변환
+            
                 console.log(`Processing row: TOTAL=${row.TOTAL}, totalRightThreeNum=${totalRightThreeNum}, totalValue=${totalValue}`);
-
+            
                 // 특정 조건에 따른 선택 로직
                 if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
+                    // 콤바인샤시일 경우
                     if (userSasi === "콤바인샤시" && (row.TOTAL % 1 <= 0.5 || row.TOTAL % 1 === 0)) {
                         console.log(`Match found for 콤바인샤시: TOTAL=${row.TOTAL}`);
-                        if (!selectedTotal || parseFloat(row.TOTAL) > parseFloat(selectedTotal.TOTAL)) {
-                            selectedTotal = row;
-                        }
-                    } else if (userSasi === "라인샤시" && row.TOTAL % 1 === 0) {
+                        selectedTotal = row; // 조건을 만족하는 경우 selectedTotal에 값을 저장
+                    }
+                    // 라인샤시일 경우
+                    else if (userSasi === "라인샤시" && row.TOTAL % 1 === 0) {
                         console.log(`Match found for 라인샤시: TOTAL=${row.TOTAL}`);
-                        if (!selectedTotal || parseFloat(row.TOTAL) > parseFloat(selectedTotal.TOTAL)) {
-                            selectedTotal = row;
-                        }
+                        selectedTotal = row; // 조건을 만족하는 경우 selectedTotal에 값을 저장
                     }
                 }
             });
@@ -1703,6 +1702,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                 break; // 조건에 맞는 배차가 선택되면 반복문 종료
             }
         }
+        
         if (selectedTotal) {
             // 재시도 로직을 적용한 업데이트 함수 사용
             await updateWithRetry(connection, selectedTotal.B_IDX);
