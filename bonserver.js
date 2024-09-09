@@ -1590,7 +1590,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 
         // 현재 로그인한 유저의 PHONE 값과 SASI 값을 가져오기
         const { userPhone, userSasi } = await new Promise((resolve, reject) => {
-            connection.query('SELECT PHONE, SASI FROM bon_user WHERE ID = ?', [userId], (err, results) => {
+            connection.query('SELECT PHONE, CAST(SASI AS CHAR CHARACTER SET utf8mb4) AS SASI FROM bon_user WHERE ID = ?', [userId], (err, results) => {
                 if (err || results.length === 0) {
                     console.error('유저 정보 조회 중 오류:', err);
                     return reject(err || new Error('유저 정보를 가져올 수 없습니다.'));
