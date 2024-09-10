@@ -108,7 +108,8 @@
                     <th style="width: 5%;">CLASS</th>
                     <th style="width: 10%;">반입모선</th>
                     <th style="width: 20%;">접안일자</th>
-                    <th style="width: 15%;">배차배정여부</th>
+                    <th style="width: 10%;">상태</th>
+                    <th style="width: 10%;">배차배정여부</th>
                 </tr>
                 <% data.forEach(function(row) { %>
                 <tr data-id="<%= row.id %>">
@@ -119,6 +120,7 @@
                         <td class="CON_CLASS"><%= row.CON_CLASS %></td>
                         <td class="B_MOSUN"><%= row.B_MOSUN %></td>
                         <td class="M_DATE2"><%= row.M_DATE2 %></td>
+                        <td class="B_BANIP"><%= row.B_BANIP %></td>
                         <td class="RESERVE"><%= row.RESERVE %></td>
                 </tr>
                 <% }); %>

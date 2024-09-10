@@ -16,14 +16,35 @@
     <script>
 
     
+    let refreshTimeout;
 
-        // 페이지를 10초마다 새로 고침하는 함수
-        function refreshPage() {
-            location.reload();
+    // 페이지를 새로고침하는 함수
+    function refreshPage() {
+        location.reload();
+    }
+
+    // 타이머를 설정하는 함수 (30초로 설정)
+    function startRefreshTimer() {
+        if (refreshTimeout) {
+            clearTimeout(refreshTimeout);
         }
+        // 30초 후에 페이지 새로고침
+        refreshTimeout = setTimeout(refreshPage, 30000); // 30초 = 30000밀리초
+    }
 
-        // 10초마다 페이지 새로 고침
-        setInterval(refreshPage, 60000); // 10초(10000밀리초)마다 refreshPage 함수 호출
+    // 사용자의 동작을 감지하는 함수
+    function resetTimer() {
+        startRefreshTimer(); // 사용자 동작이 감지될 때마다 타이머 리셋
+    }
+
+    // 이벤트 리스너를 추가하여 사용자의 동작을 감지
+    window.addEventListener('mousemove', resetTimer);  // 마우스 이동
+    window.addEventListener('keydown', resetTimer);    // 키보드 입력
+    window.addEventListener('mousedown', resetTimer);  // 마우스 클릭
+    window.addEventListener('touchstart', resetTimer); // 터치 동작 (모바일)
+
+    // 초기 타이머 시작
+    startRefreshTimer();
         
     </script>
 
@@ -94,15 +115,18 @@
     <h2 class="fs-l2">본선 배차로그</h2>
 </section>
 
-
+<div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 20px;">
+    <button class="copy-btn" onclick="copySelectedRows()" style="margin-left: 20px;">복사</button>
+</div>
 
     <script src="/socket.io/socket.io.js"></script>
     <table id="ts" class="custom-table">
         <thead>
             <tr>
+                <th style="width: 5%;">체크여부</th> 
                 <th>차량번호</th>
                 <th>컨테이너번호</th>
-                <th style = "width: 20%;">구간</th>
+                <th style="width: 20%;">구간</th>
                 <th>배차시간</th>
                 <th>상차여부</th>
                 <th>하차여부</th>
@@ -111,15 +135,17 @@
         <tbody>
             <% data.forEach(function(row) { %>
                 <tr data-id="<%= row.id %>">
+                    <td style="width: 5%;"><input type="checkbox" class="row-checkbox" /></td>  <!-- 행 선택 체크박스 -->
                     <td class="CAR"><%= row.CAR %></td>
                     <td class="CUN_NO"><%= row.CON_NO %></td>
                     <td class="SANG_HA"><%= row.SANG_HA %></td>
-                    <td class="TIME <%= row.TIME === '오류 확인' ? 'error' : '' %>"><%= row.TIME %></td>
+                    <td class="TIME"><%= row.TIME %></td>
                     <td class="SANG_WORK"><%= row.SANG_WORK %></td>
                     <td class="HA_WORK"><%= row.HA_WORK %></td>
                 </tr>
             <% }); %>
-        </tbody></table>
+        </tbody>
+    </table>
             
 
 
@@ -135,6 +161,69 @@
 </section>
 
 <style>
+
+    /*체크박스 ------------------------------------------------------------------------------------------*/
+
+    .row-checkbox {
+    width: 25px;
+    height: 25px;
+    border: 2px solid limegreen;
+    background-color: transparent;
+    cursor: pointer;
+    transition: all 0.3s ease-in-out;
+    }
+
+    .row-checkbox:checked {
+        background-color: limegreen;
+        border-color: limegreen;
+    }
+
+
+    .copy-btn {
+    background-color: limegreen; /* 버튼 배경색 */
+    color: black; /* 텍스트 색상 */
+    padding: 10px 20px; /* 버튼 내 여백 */
+    font-size: 1.5em; /* 글씨 크기 */
+    border: none; /* 기본 테두리 제거 */
+    border-radius: 10px; /* 모서리를 둥글게 */
+    cursor: pointer; /* 커서 모양을 포인터로 변경 */
+    transition: background-color 0.3s ease-in-out, transform 0.3s ease-in-out;
+    }
+
+    .copy-btn:hover {
+        background-color: darkgreen; /* 마우스 오버 시 배경색 변경 */
+        transform: scale(1.05); /* 호버 시 약간 확대 */
+    }
+
+    /*복사버튼 ------------------------------------------------------------------------------------------*/
+
+    .copy-btn {
+    background-color: limegreen; /* 버튼 배경색 */
+    color: white; /* 텍스트 색상 */
+    padding: 12px 24px; /* 버튼 내 여백을 더 넉넉하게 */
+    font-size: 1.2em; /* 글씨 크기 적당하게 */
+    font-weight: bold; /* 텍스트를 굵게 */
+    font-family: 'Roboto', sans-serif; /* 깔끔한 폰트 설정 */
+    border: none; /* 기본 테두리 제거 */
+    border-radius: 8px; /* 모서리를 적당히 둥글게 */
+    cursor: pointer; /* 커서 모양을 포인터로 변경 */
+    transition: background-color 0.3s ease-in-out, transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1); /* 약간의 그림자 추가 */
+    }
+
+    .copy-btn:hover {
+        background-color: darkgreen; /* 마우스 오버 시 배경색 변경 */
+        transform: scale(1.05); /* 호버 시 약간 확대 */
+        box-shadow: 0px 6px 10px rgba(0, 0, 0, 0.2); /* 호버 시 그림자 효과 강화 */
+    }
+
+    .copy-btn:active {
+        transform: scale(1); /* 클릭 시 원래 크기로 돌아옴 */
+        box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.1); /* 클릭 시 그림자 축소 */
+    }
+
+
+
     /*전송확인 테이블----------------------------------------------------------------------------------------------*/
     .custom-table-container {
         background-color: black; /* 배경색 검정 */
@@ -587,5 +676,36 @@ function openModal(modalId) {
 
 
 
+        // 전체 선택/해제 기능
+    document.getElementById('select-all').addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('.row-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = this.checked;
+        });
+    });
+
+    // 선택된 행 복사 기능
+    function copySelectedRows() {
+        const selectedRows = [];
+        const checkboxes = document.querySelectorAll('.row-checkbox:checked');
+        
+        checkboxes.forEach(checkbox => {
+            const row = checkbox.closest('tr');
+            const carNumber = row.querySelector('.CAR').textContent.trim(); // 차량번호
+            const containerNumber = row.querySelector('.CUN_NO').textContent.trim(); // 컨테이너번호
+            
+            // 두 개의 데이터를 탭으로 구분하여 저장
+            selectedRows.push(`${containerNumber}\t${carNumber}`);
+        });
+
+        const clipboardData = selectedRows.join('\n'); // 각 행을 줄바꿈으로 구분
+        navigator.clipboard.writeText(clipboardData)
+            .then(() => {
+                alert('복사완료');
+            })
+            .catch(err => {
+                console.error('복사 중 오류 발생:', err);
+            });
+    }
 
 </script>

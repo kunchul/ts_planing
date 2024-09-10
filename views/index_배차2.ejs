@@ -479,7 +479,7 @@ document.addEventListener('DOMContentLoaded', function() {
         sessionTimeout = setTimeout(() => {
             alert('오랜 시간 활동이 없어 로그아웃됩니다.');
             window.location.href = '/';
-        }, 10 * 60 * 60 * 1000); 
+        }, 10 * 60 * 60 * 1000); // 5시간 타임아웃 설정
     }
 
     // 페이지 로드 시와 사용자 활동 시 타이머 리셋
