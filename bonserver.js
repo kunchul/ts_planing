@@ -1069,43 +1069,59 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                 return res.status(500).send('내부 서버 오류');
             }
     
-            let selectedRow = null;
-            let matchedRow = null;  // sangHaPrefix와 currentLocDigits가 일치하는 행을 저장
-            let largestRow = null;  // 조건에 부합하는 가장 큰 값을 찾기 위한 변수
+            let selectedRow = null;  // 최종 선택된 행을 저장하는 변수
     
-            planResults.forEach(row => {
-                const totalValueStr = String(row.TOTAL).split('.')[0];
-                const totalRightThree = totalValueStr.slice(-3);
-                const totalRightThreeNum = parseInt(totalRightThree, 10);
-                const totalValue = parseInt(totalValueStr, 10);
+            // SANG_HA 접두사에 따른 우선순위 리스트 정의
+            const sangHaPriorityMap = {
+                DGTBC: ["DGTBC", "HJNPC", "PNCOC", "PNITC", "HPNTC", "BNCTC", "BCTHD"],
+                HJNPC: ["HJNPC", "PNCOC", "DGTBC", "PNITC", "HPNTC", "BNCTC", "BCTHD"],
+                PNCOC: ["PNCOC", "HJNPC", "PNITC", "DGTBC", "HPNTC", "BNCTC", "BCTHD"],
+                PNITC: ["PNITC", "PNCOC", "HPNTC", "HJNPC", "DGTBC", "BNCTC", "BCTHD"],
+                HPNTC: ["HPNTC", "BNCTC", "PNITC", "BCTHD", "PNCOC", "HJNPC", "DGTBC"],
+                BNCTC: ["BNCTC", "HPNTC", "BCTHD", "PNITC", "PNCOC", "HJNPC", "DGTBC"],
+                BCTHD: ["BCTHD", "BNCTC", "HPNTC", "PNITC", "PNCOC", "HJNPC", "DGTBC"]
+            };
     
-                if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
-                    const sangHaPrefix = row.SANG_HA.split('(')[0].split('-')[0];
-
-                    if (currentLocDigits === sangHaPrefix) {
-                        if ((SASI === "콤바인샤시" && row.TOTAL % 1 <= 0.5) || 
-                            (SASI === "라인샤시" && row.TOTAL % 1 === 0)) {
-                            if (!matchedRow || parseFloat(row.TOTAL) > parseFloat(matchedRow.TOTAL)) {
-                                matchedRow = row;
-                            }
-                        }
-                    } else {
-                        if ((SASI === "콤바인샤시" && row.TOTAL % 1 <= 0.5) || 
-                            (SASI === "라인샤시" && row.TOTAL % 1 === 0)) {
-                            if (!largestRow || parseFloat(row.TOTAL) > parseFloat(largestRow.TOTAL)) {
-                                largestRow = row;
+            // currentLocDigits에 맞는 우선순위 리스트 가져오기
+            const priorityList = sangHaPriorityMap[currentLocDigits] || [];
+    
+            // 차량 조건에 맞는 데이터를 찾기 위한 반복문
+            for (let i = 0; i < priorityList.length; i++) {
+                const prefix = priorityList[i];  // 현재 우선순위 접두사
+    
+                // planResults에서 우선순위 접두사와 일치하는 데이터를 찾음
+                planResults.some(row => {
+                    const totalValueStr = String(row.TOTAL).split('.')[0];
+                    const totalRightThree = totalValueStr.slice(-3);
+                    const totalRightThreeNum = parseInt(totalRightThree, 10);
+                    const totalValue = parseInt(totalValueStr, 10);
+    
+                    // TOTAL 값 조건 필터링
+                    if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
+                        const sangHaPrefix = row.SANG_HA.split('(')[0].split('-')[0];
+    
+                        // 현재 우선순위 접두사(prefix)와 일치하는 경우
+                        if (sangHaPrefix === prefix) {
+                            // SASI 조건에 맞는지 확인
+                            if ((SASI === "콤바인샤시" && row.TOTAL % 1 <= 0.5) || 
+                                (SASI === "라인샤시" && row.TOTAL % 1 === 0)) {
+                                
+                                // 최종 선택된 행을 저장하고 루프 종료
+                                selectedRow = row;
+                                return true;  // 일치하는 데이터를 찾았으므로 반복문 종료
                             }
                         }
                     }
-                }
-            });
+                    return false;  // 일치하는 데이터가 없으면 계속 탐색
+                });
     
-            if (matchedRow) {
-                selectedRow = matchedRow;
-            } else if (largestRow) {
-                selectedRow = largestRow;
+                // 일치하는 데이터를 찾았으면 더 이상 우선순위를 탐색하지 않음
+                if (selectedRow) {
+                    break;
+                }
             }
     
+            // 선택된 데이터 처리
             if (selectedRow) {
                 assignTotalValue(selectedRow, user);
             } else {
@@ -1655,49 +1671,65 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         // 각 우선순위 범위에 따라 필터링하여 선택
         for (const priority of range) {
             const [min, max] = priority.split('-').map(Number);
-
+        
             const possibleTotals = await new Promise((resolve, reject) => {
                 connection.query(`
-                    SELECT * 
-                    FROM bon_planing_sin 
-                    WHERE CAST(SUBSTRING(CAST(TOTAL AS UNSIGNED), -3) AS UNSIGNED) BETWEEN ? AND ?
-                    AND RESERVE IS NULL
-                    AND (B_BANIP NOT IN ("HOLD", "CANCEL") OR B_BANIP IS NULL)
-                    ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
+                    (
+                        SELECT * 
+                        FROM bon_planing_sin 
+                        WHERE CAST(SUBSTRING(CAST(TOTAL AS UNSIGNED), -3) AS UNSIGNED) BETWEEN ? AND ?
+                        AND RESERVE IS NULL
+                        AND B_BANIP = '1ST'
+                        AND (
+                            (? = '라인샤시' AND MOD(CAST(TOTAL AS DECIMAL(10,1)), 1) = 0)  -- 라인샤시는 소수점이 없어야 함
+                            OR
+                            (? = '콤바인샤시')  -- 콤바인샤시는 소수점이 있어도 되고 없어도 됨
+                        )
+                        ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
+                        LIMIT 1
+                    )
+                    UNION
+                    (
+                        SELECT * 
+                        FROM bon_planing_sin 
+                        WHERE CAST(SUBSTRING(CAST(TOTAL AS UNSIGNED), -3) AS UNSIGNED) BETWEEN ? AND ?
+                        AND RESERVE IS NULL
+                        AND (B_BANIP NOT IN ("HOLD", "CANCEL") OR B_BANIP IS NULL)
+                        AND (
+                            (? = '라인샤시' AND MOD(CAST(TOTAL AS DECIMAL(10,1)), 1) = 0)  
+                            OR
+                            (? = '콤바인샤시')
+                        )
+                        ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
+                        LIMIT 1
+                    )
                     LIMIT 1;
-                `, [min, max], (err, results) => {
+                `, [min, max, userSasi, userSasi, min, max, userSasi, userSasi], (err, results) => {
                     if (err) {
                         console.error('쿼리 실행 중 오류:', err);
                         return reject(err);
                     }
+                    // 쿼리 결과를 resolve로 전달
                     resolve(results);
                 });
             });
-
+        
             // 쿼리 외부에서 조건을 적용하여 필터링
             possibleTotals.forEach(row => {
                 const totalValueStr = String(row.TOTAL).split('.')[0]; // TOTAL의 정수 부분 추출
                 const totalRightThree = totalValueStr.slice(-3); // TOTAL 값의 마지막 세 자리 추출
                 const totalRightThreeNum = parseInt(totalRightThree, 10); // 마지막 세 자리를 정수로 변환
                 const totalValue = parseInt(totalValueStr, 10); // TOTAL 값의 정수 부분을 정수로 변환
-            
+        
                 console.log(`Processing row: TOTAL=${row.TOTAL}, totalRightThreeNum=${totalRightThreeNum}, totalValue=${totalValue}`);
-            
+        
                 // 특정 조건에 따른 선택 로직
                 if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
-                    // 콤바인샤시일 경우
-                    if (userSasi === "콤바인샤시" && (row.TOTAL % 1 <= 0.5 || row.TOTAL % 1 === 0)) {
-                        console.log(`Match found for 콤바인샤시: TOTAL=${row.TOTAL}`);
-                        selectedTotal = row; // 조건을 만족하는 경우 selectedTotal에 값을 저장
-                    }
-                    // 라인샤시일 경우
-                    else if (userSasi === "라인샤시" && row.TOTAL % 1 === 0) {
-                        console.log(`Match found for 라인샤시: TOTAL=${row.TOTAL}`);
-                        selectedTotal = row; // 조건을 만족하는 경우 selectedTotal에 값을 저장
-                    }
+                    console.log(`Match found: TOTAL=${row.TOTAL}`);
+                    selectedTotal = row; // 조건을 만족하는 경우 selectedTotal에 값을 저장
                 }
             });
-
+        
             if (selectedTotal) {
                 break; // 조건에 맞는 배차가 선택되면 반복문 종료
             }
