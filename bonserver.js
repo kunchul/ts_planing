@@ -1606,7 +1606,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 
         // 현재 로그인한 유저의 PHONE 값과 SASI 값을 가져오기
         const { userPhone, userSasi } = await new Promise((resolve, reject) => {
-            connection.query('SELECT PHONE, CAST(SASI AS CHAR CHARACTER SET utf8mb4) AS SASI FROM bon_user WHERE ID = ?', [userId], (err, results) => {
+            connection.query('SELECT PHONE, CONVERT(CAST(SASI AS BINARY) USING utf8mb4) AS SASI FROM bon_user WHERE ID = ?', [userId], (err, results) => {
                 if (err || results.length === 0) {
                     console.error('유저 정보 조회 중 오류:', err);
                     return reject(err || new Error('유저 정보를 가져올 수 없습니다.'));
@@ -1648,7 +1648,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             '052-058': ['072-078', '092-100', '102-110', '052-058', '012-019', '032-038'],
             '072-078': ['052-058', '092-100', '102-110', '072-078', '012-019', '032-038'],
             '092-100': ['102-110', '012-019', '092-100', '052-058', '032-038', '072-078'],
-            '102-110': ['092-100', '052-058', '032-038', '102-110', '072-078', '012-019'],
+            '102-110': ['092-100', '032-038', '052-058', '102-110', '072-078', '012-019'],
             '012-019': ['032-038', '012-019', '092-100', '102-110', '052-058', '072-078'],
             '032-038': ['012-019', '032-038', '102-110', '092-100', '072-078', '052-058'],
         };
@@ -1672,66 +1672,81 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         for (const priority of range) {
             const [min, max] = priority.split('-').map(Number);
         
+            // 첫 번째 쿼리 실행: B_BANIP = '1ST'인 경우 (조건 없이 바로 사용)
             const possibleTotals = await new Promise((resolve, reject) => {
                 connection.query(`
-                    (
-                        SELECT * 
-                        FROM bon_planing_sin 
-                        WHERE CAST(SUBSTRING(CAST(TOTAL AS UNSIGNED), -3) AS UNSIGNED) BETWEEN ? AND ?
-                        AND RESERVE IS NULL
-                        AND B_BANIP = '1ST'
-                        AND (
-                            (? = '라인샤시' AND MOD(CAST(TOTAL AS DECIMAL(10,1)), 1) = 0)  -- 라인샤시는 소수점이 없어야 함
-                            OR
-                            (? = '콤바인샤시')  -- 콤바인샤시는 소수점이 있어도 되고 없어도 됨
-                        )
-                        ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
-                        LIMIT 1
+                    SELECT * 
+                    FROM bon_planing_sin 
+                    WHERE RESERVE IS NULL
+                    AND B_BANIP = '1ST'
+                    AND (
+                        (? = '라인샤시' AND MOD(CAST(TOTAL AS DECIMAL(10,1)), 1) = 0)
+                        OR
+                        (? = '콤바인샤시')
                     )
-                    UNION
-                    (
+                    ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
+                    LIMIT 1;
+                `, [userSasi, userSasi], (err, results) => {
+                    if (err) {
+                        console.error('첫 번째 쿼리 실행 중 오류:', err);
+                        return reject(err);
+                    }
+                    resolve(results);
+                });
+            });
+        
+            // 첫 번째 쿼리에서 데이터가 있다면 조건 없이 바로 선택
+            if (possibleTotals.length > 0) {
+                selectedTotal = possibleTotals[0];  // 첫 번째 데이터를 바로 선택
+                console.log(`Selected row from first query: TOTAL=${selectedTotal.TOTAL}`);
+                break; // 첫 번째 쿼리에서 선택되었으면 반복 종료
+            }
+        
+            // 첫 번째 쿼리에서 결과가 없으면 두 번째 쿼리 실행
+            if (possibleTotals.length === 0) {
+                const possibleTotalsSecond = await new Promise((resolve, reject) => {
+                    connection.query(`
                         SELECT * 
                         FROM bon_planing_sin 
                         WHERE CAST(SUBSTRING(CAST(TOTAL AS UNSIGNED), -3) AS UNSIGNED) BETWEEN ? AND ?
                         AND RESERVE IS NULL
                         AND (B_BANIP NOT IN ("HOLD", "CANCEL") OR B_BANIP IS NULL)
                         AND (
-                            (? = '라인샤시' AND MOD(CAST(TOTAL AS DECIMAL(10,1)), 1) = 0)  
+                            (? = '라인샤시' AND MOD(CAST(TOTAL AS DECIMAL(10,1)), 1) = 0)
                             OR
                             (? = '콤바인샤시')
                         )
                         ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
-                        LIMIT 1
-                    )
-                    LIMIT 1;
-                `, [min, max, userSasi, userSasi, min, max, userSasi, userSasi], (err, results) => {
-                    if (err) {
-                        console.error('쿼리 실행 중 오류:', err);
-                        return reject(err);
-                    }
-                    // 쿼리 결과를 resolve로 전달
-                    resolve(results);
+                        LIMIT 1;
+                    `, [min, max, userSasi, userSasi], (err, results) => {
+                        if (err) {
+                            console.error('두 번째 쿼리 실행 중 오류:', err);
+                            return reject(err);
+                        }
+                        resolve(results);
+                    });
                 });
-            });
         
-            // 쿼리 외부에서 조건을 적용하여 필터링
-            possibleTotals.forEach(row => {
-                const totalValueStr = String(row.TOTAL).split('.')[0]; // TOTAL의 정수 부분 추출
-                const totalRightThree = totalValueStr.slice(-3); // TOTAL 값의 마지막 세 자리 추출
-                const totalRightThreeNum = parseInt(totalRightThree, 10); // 마지막 세 자리를 정수로 변환
-                const totalValue = parseInt(totalValueStr, 10); // TOTAL 값의 정수 부분을 정수로 변환
+                // 두 번째 쿼리에서 데이터를 찾으면 필터링 적용
+                possibleTotalsSecond.forEach(row => {
+                    const totalValueStr = String(row.TOTAL).split('.')[0]; // TOTAL의 정수 부분 추출
+                    const totalRightThree = totalValueStr.slice(-3); // TOTAL 값의 마지막 세 자리 추출
+                    const totalRightThreeNum = parseInt(totalRightThree, 10); // 마지막 세 자리를 정수로 변환
+                    const totalValue = parseInt(totalValueStr, 10); // TOTAL 값의 정수 부분을 정수로 변환
         
-                console.log(`Processing row: TOTAL=${row.TOTAL}, totalRightThreeNum=${totalRightThreeNum}, totalValue=${totalValue}`);
+                    console.log(`Processing row from second query: TOTAL=${row.TOTAL}, totalRightThreeNum=${totalRightThreeNum}, totalValue=${totalValue}`);
         
-                // 특정 조건에 따른 선택 로직
-                if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
-                    console.log(`Match found: TOTAL=${row.TOTAL}`);
-                    selectedTotal = row; // 조건을 만족하는 경우 selectedTotal에 값을 저장
+                    // 두 번째 쿼리에서만 특정 조건에 따른 선택 로직 적용
+                    if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
+                        console.log(`Match found from second query: TOTAL=${row.TOTAL}`);
+                        selectedTotal = row; // 조건을 만족하는 경우 selectedTotal에 값을 저장
+                    }
+                });
+        
+                // 조건을 만족하는 배차가 있으면 반복 종료
+                if (selectedTotal) {
+                    break;
                 }
-            });
-        
-            if (selectedTotal) {
-                break; // 조건에 맞는 배차가 선택되면 반복문 종료
             }
         }
         
@@ -2602,4 +2617,3 @@ app.post('/api/search-by-car', (req, res) => {
         res.json(results);
     });
 });
-
