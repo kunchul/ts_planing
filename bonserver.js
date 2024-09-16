@@ -1436,45 +1436,56 @@ app.post('/api/update-ha-work', (req, res) => {
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1);
 
+    // 결과 메시지를 저장할 배열
+    let resultsMessage = [];
+
     // 현재 로그인한 유저의 PHONE 값을 가져오기
     connection.query('SELECT PHONE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
-        if (err || userResults.length === 0) {
+        if (err) {
             console.error('유저 정보 조회 중 오류:', err);
-            connection.end();
-            return res.status(500).json({ success: false, message: '유저 정보를 가져올 수 없습니다.' });
+            resultsMessage.push('유저 정보를 가져올 수 없습니다.');
+        } else if (userResults.length === 0) {
+            console.error('유저 정보를 찾을 수 없습니다.');
+            resultsMessage.push('유저 정보를 찾을 수 없습니다.');
+        } else {
+            const userPhone = userResults[0].PHONE;
+
+            // bon_session 테이블에서 PHONE 값이 일치하는 행 삭제
+            connection.query('DELETE FROM bon_session WHERE PHONE = ?', [userPhone], (deleteSessionError, deleteSessionResults) => {
+                if (deleteSessionError) {
+                    console.error('bon_session 삭제 중 오류:', deleteSessionError);
+                    resultsMessage.push('bon_session 삭제 실패');
+                } else {
+                    resultsMessage.push(`${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`);
+                }
+            });
         }
 
-        const userPhone = userResults[0].PHONE;
-
-        // bon_session 테이블에서 PHONE 값이 일치하는 행 삭제
-        connection.query('DELETE FROM bon_session WHERE PHONE = ?', [userPhone], (deleteSessionError, deleteSessionResults) => {
-            if (deleteSessionError) {
-                console.error('bon_session 삭제 중 오류:', deleteSessionError);
-                connection.end();
-                return res.status(500).json({ success: false, message: 'bon_session 삭제 오류' });
+        // bon_log 테이블의 HA_WORK 업데이트
+        connection.query('UPDATE bon_log SET HA_WORK = ? WHERE CON_NO = ?', [status, conNo], (error, results) => {
+            if (error) {
+                console.error('HA_WORK 업데이트 중 오류:', error);
+                resultsMessage.push('HA_WORK 업데이트 실패');
+            } else {
+                resultsMessage.push(`${results.affectedRows}개의 행이 bon_log에서 업데이트되었습니다.`);
             }
-
-            // bon_log 테이블의 HA_WORK 업데이트
-            connection.query('UPDATE bon_log SET HA_WORK = ? WHERE CON_NO = ?', [status, conNo], (error, results) => {
-                if (error) {
-                    console.error('HA_WORK 업데이트 중 오류:', error);
-                    connection.end();
-                    return res.status(500).json({ success: false, message: 'HA_WORK 업데이트 오류' });
-                }
-
-                // bon_planing_sin 테이블에서 CON_NO에 해당하는 행 삭제
-                connection.query('DELETE FROM bon_planing_sin WHERE CON_NO = ?', [conNo], (deleteError, deleteResults) => {
-                    connection.end(); // 쿼리 실행 후 연결 종료
-
-                    if (deleteError) {
-                        console.error('bon_planing_sin 삭제 중 오류:', deleteError);
-                        return res.status(500).json({ success: false, message: 'bon_planing_sin 삭제 오류' });
-                    }
-
-                    res.json({ success: true, message: '업데이트 및 삭제 완료' });
-                });
-            });
         });
+
+        // bon_planing_sin 테이블에서 CON_NO에 해당하는 행 삭제
+        connection.query('DELETE FROM bon_planing_sin WHERE CON_NO = ?', [conNo], (deleteError, deleteResults) => {
+            if (deleteError) {
+                console.error('bon_planing_sin 삭제 중 오류:', deleteError);
+                resultsMessage.push('bon_planing_sin 삭제 실패');
+            } else {
+                resultsMessage.push(`${deleteResults.affectedRows}개의 행이 bon_planing_sin에서 삭제되었습니다.`);
+            }
+        });
+
+        // 모든 쿼리가 비동기로 독립적으로 실행되므로 연결을 바로 종료
+        connection.end(); 
+
+        // 모든 작업이 독립적으로 실행되므로 결과 메시지를 전송
+        res.json({ success: true, message: resultsMessage });
     });
 });
 
