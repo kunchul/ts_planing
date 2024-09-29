@@ -1586,18 +1586,14 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             await new Promise((resolve, reject) => {
                 connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [bIdx], (err) => {
                     if (err) {
-                        if (err.code === 'ER_LOCK_WAIT_TIMEOUT') {
-                            console.log(`Lock wait timeout exceeded for B_IDX: ${bIdx}. Skipping this update.`);
-                            return resolve();  // 잠금 오류 발생 시 재시도 없이 다음으로 진행
-                        }
-                        return reject(err);  // 다른 에러는 기록 후 종료
+                        return reject(err);  // 오류 발생 시 바로 종료
                     }
                     resolve(); // 성공 시 처리
                 });
             });
         } catch (err) {
             console.error(`Failed to update B_IDX ${bIdx}:`, err);
-            // 계속 진행할 수 있도록 설정
+            // 오류 발생 시 로그만 기록하고 계속 진행
         }
     };
 
