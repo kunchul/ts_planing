@@ -969,26 +969,6 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1);
 
-    const updateWithoutRetry = async (connection, bIdx) => {
-        try {
-            await new Promise((resolve, reject) => {
-                connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [bIdx], (err) => {
-                    if (err) {
-                        if (err.code === 'ER_LOCK_WAIT_TIMEOUT') {
-                            console.log(`Lock wait timeout exceeded for B_IDX: ${bIdx}. Skipping this update.`);
-                            return resolve();  // 재시도하지 않고 넘어감
-                        }
-                        return reject(err);  // 다른 에러 발생 시에는 reject로 처리
-                    }
-                    resolve();
-                });
-            });
-        } catch (err) {
-            console.error(`Failed to update B_IDX ${bIdx}:`, err);
-            // 오류를 기록하고도 계속 진행할 수 있도록 함
-        }
-    };
-
     connection.query('SELECT CAR, SASI, NAME, ROLE, PHONE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
         if (err || userResults.length === 0) {
             console.error('bon_user 데이터 조회 중 오류:', err);
@@ -1135,7 +1115,6 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
     
         const selectedSangHa = row.SANG_HA;
         
-    
         // bon_session 테이블에 데이터 삽입
         connection.query(
             `INSERT INTO bon_session (NAME, CAR, PHONE, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, DATA_INS)
@@ -1147,31 +1126,31 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                     connection.end();
                     return res.status(500).send('내부 서버 오류');
                 }
-    
-                // 삽입 후 bon_planing_sin 테이블의 RESERVE 값을 재시도 로직을 통해 업데이트
-                updateWithRetry(connection, row.CON_NO)
-                    .then(() => {
-                        req.session.assignedData = {
-                            assignedTotal: row.TOTAL,
-                            currentData: {
-                                SANG_HA: row.SANG_HA,
-                                CON_NO: row.CON_NO,
-                                CON_KU: row.CON_KU,
-                                CON_KG: row.CON_KG,
-                                B_KUM_IN: row.B_KUM_IN,
-                                CON_TEMP: row.CON_TEMP,
-                                CON_CLASS: row.CON_CLASS,
-                                SASI: user.SASI
-                            }
-                        };
-    
-                        finalizeResponse();
-                    })
-                    .catch((err) => {
+
+                // bon_planing_sin 테이블의 RESERVE 값을 업데이트 (재시도 로직 제거)
+                connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [row.B_IDX], (err) => {
+                    if (err) {
                         console.error('bon_planing_sin 업데이트 중 오류:', err);
                         connection.end();
                         return res.status(500).send('내부 서버 오류');
-                    });
+                    }
+
+                    req.session.assignedData = {
+                        assignedTotal: row.TOTAL,
+                        currentData: {
+                            SANG_HA: row.SANG_HA,
+                            CON_NO: row.CON_NO,
+                            CON_KU: row.CON_KU,
+                            CON_KG: row.CON_KG,
+                            B_KUM_IN: row.B_KUM_IN,
+                            CON_TEMP: row.CON_TEMP,
+                            CON_CLASS: row.CON_CLASS,
+                            SASI: user.SASI
+                        }
+                    };
+
+                    finalizeResponse();
+                });
             }
         );
     }
