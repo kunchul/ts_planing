@@ -969,29 +969,23 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1);
 
-    // 재시도 로직 함수
-    const updateWithRetry = async (connection, conNo, retries = 5) => {
-        for (let attempt = 0; attempt < retries; attempt++) {
-            try {
-                await new Promise((resolve, reject) => {
-                    connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE CON_NO = ?`, [conNo], (err) => {
-                        if (err) {
-                            if (err.code === 'ER_LOCK_WAIT_TIMEOUT') {
-                                console.log(`Lock wait timeout exceeded. Retrying... (${attempt + 1}/${retries})`);
-                                return reject('Timeout, retrying...');
-                            }
-                            return reject(err);
+    const updateWithoutRetry = async (connection, bIdx) => {
+        try {
+            await new Promise((resolve, reject) => {
+                connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [bIdx], (err) => {
+                    if (err) {
+                        if (err.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                            console.log(`Lock wait timeout exceeded for B_IDX: ${bIdx}. Skipping this update.`);
+                            return resolve();  // 재시도하지 않고 넘어감
                         }
-                        resolve();
-                    });
+                        return reject(err);  // 다른 에러 발생 시에는 reject로 처리
+                    }
+                    resolve();
                 });
-                return; // 성공 시 종료
-            } catch (err) {
-                if (attempt === retries - 1) {
-                    throw err; // 최대 재시도 횟수 초과 시 오류 발생
-                }
-                await new Promise(resolve => setTimeout(resolve, 1000)); // 1초 대기 후 재시도
-            }
+            });
+        } catch (err) {
+            console.error(`Failed to update B_IDX ${bIdx}:`, err);
+            // 오류를 기록하고도 계속 진행할 수 있도록 함
         }
     };
 
@@ -1584,31 +1578,26 @@ app.get('/get-current-data', (req, res) => {
 
 //다음배차
 app.post('/calculate-next-dispatch', async (req, res) => {
-    const connection = createConnection(dbConfig1); // 데이터베이스 연결 객체 생성
+    const connection = createConnection({ ...dbConfig1, multipleStatements: true }); // 자동 커밋 설정 및 다중 쿼리 허용
 
-    // 재시도 로직 함수
-    const updateWithRetry = async (connection, bIdx, retries = 5) => {
-        for (let attempt = 0; attempt < retries; attempt++) {
-            try {
-                await new Promise((resolve, reject) => {
-                    connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [bIdx], (err) => {
-                        if (err) {
-                            if (err.code === 'ER_LOCK_WAIT_TIMEOUT') {
-                                console.log(`Lock wait timeout exceeded. Retrying... (${attempt + 1}/${retries})`);
-                                return reject('Timeout, retrying...');
-                            }
-                            return reject(err);
+    // 재시도 로직을 제거한 함수: 오류 로그만 남기고 바로 넘어가도록 설정
+    const updateWithoutRetry = async (connection, bIdx) => {
+        try {
+            await new Promise((resolve, reject) => {
+                connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?`, [bIdx], (err) => {
+                    if (err) {
+                        if (err.code === 'ER_LOCK_WAIT_TIMEOUT') {
+                            console.log(`Lock wait timeout exceeded for B_IDX: ${bIdx}. Skipping this update.`);
+                            return resolve();  // 잠금 오류 발생 시 재시도 없이 다음으로 진행
                         }
-                        resolve();
-                    });
+                        return reject(err);  // 다른 에러는 기록 후 종료
+                    }
+                    resolve(); // 성공 시 처리
                 });
-                return; // 성공적으로 업데이트되면 종료
-            } catch (err) {
-                if (attempt === retries - 1) {
-                    throw err; // 최대 재시도 횟수 초과 시 오류 발생
-                }
-                await new Promise(resolve => setTimeout(resolve, 1000)); // 1초 대기 후 재시도
-            }
+            });
+        } catch (err) {
+            console.error(`Failed to update B_IDX ${bIdx}:`, err);
+            // 계속 진행할 수 있도록 설정
         }
     };
 
@@ -1640,14 +1629,14 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             });
         });
 
-        // sessionTotal 값을 무조건 currentTotal로 사용
+        // sessionTotal 값을 사용
         let currentTotal = sessionTotal;
 
         if (!currentTotal || !userSasi) {
             return res.status(400).json({ message: 'currentTotal 또는 SASI 값이 누락되었습니다.' });
         }
 
-        const integerTotal = Math.floor(currentTotal); // 소수점 이하를 제거한 값
+        const integerTotal = Math.floor(currentTotal); // 소수점 이하 제거
         const currentTotalString = integerTotal.toString(); // 문자열로 변환
         const currentTotalTrimmed = currentTotalString.slice(-3); // 마지막 세 자리 추출
 
@@ -1679,11 +1668,11 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 
         let selectedTotal = null;
 
-        // 각 우선순위 범위에 따라 필터링하여 선택
+        // 우선순위 범위에 따라 필터링하여 선택
         for (const priority of range) {
             const [min, max] = priority.split('-').map(Number);
-        
-            // 첫 번째 쿼리 실행: B_BANIP = '1ST'인 경우 (조건 없이 바로 사용)
+            
+            // 첫 번째 쿼리 실행
             const possibleTotals = await new Promise((resolve, reject) => {
                 connection.query(`
                     SELECT * 
@@ -1699,21 +1688,20 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                     LIMIT 1;
                 `, [userSasi, userSasi], (err, results) => {
                     if (err) {
-                        console.error('첫 번째 쿼리 실행 중 오류:', err);
+                        console.error('쿼리 실행 중 오류:', err);
                         return reject(err);
                     }
                     resolve(results);
                 });
             });
-        
-            // 첫 번째 쿼리에서 데이터가 있다면 조건 없이 바로 선택
+
             if (possibleTotals.length > 0) {
                 selectedTotal = possibleTotals[0];  // 첫 번째 데이터를 바로 선택
                 console.log(`Selected row from first query: TOTAL=${selectedTotal.TOTAL}`);
-                break; // 첫 번째 쿼리에서 선택되었으면 반복 종료
+                break; // 쿼리에서 선택되면 종료
             }
-        
-            // 첫 번째 쿼리에서 결과가 없으면 두 번째 쿼리 실행
+
+            // 두 번째 쿼리 실행
             if (possibleTotals.length === 0) {
                 const possibleTotalsSecond = await new Promise((resolve, reject) => {
                     connection.query(`
@@ -1737,24 +1725,21 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                         resolve(results);
                     });
                 });
-        
-                // 두 번째 쿼리에서 데이터를 찾으면 필터링 적용
+
                 possibleTotalsSecond.forEach(row => {
-                    const totalValueStr = String(row.TOTAL).split('.')[0]; // TOTAL의 정수 부분 추출
-                    const totalRightThree = totalValueStr.slice(-3); // TOTAL 값의 마지막 세 자리 추출
-                    const totalRightThreeNum = parseInt(totalRightThree, 10); // 마지막 세 자리를 정수로 변환
-                    const totalValue = parseInt(totalValueStr, 10); // TOTAL 값의 정수 부분을 정수로 변환
-        
+                    const totalValueStr = String(row.TOTAL).split('.')[0]; 
+                    const totalRightThree = totalValueStr.slice(-3); 
+                    const totalRightThreeNum = parseInt(totalRightThree, 10); 
+                    const totalValue = parseInt(totalValueStr, 10); 
+
                     console.log(`Processing row from second query: TOTAL=${row.TOTAL}, totalRightThreeNum=${totalRightThreeNum}, totalValue=${totalValue}`);
-        
-                    // 두 번째 쿼리에서만 특정 조건에 따른 선택 로직 적용
+
                     if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
                         console.log(`Match found from second query: TOTAL=${row.TOTAL}`);
-                        selectedTotal = row; // 조건을 만족하는 경우 selectedTotal에 값을 저장
+                        selectedTotal = row; 
                     }
                 });
-        
-                // 조건을 만족하는 배차가 있으면 반복 종료
+
                 if (selectedTotal) {
                     break;
                 }
@@ -1762,12 +1747,10 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         }
         
         if (selectedTotal) {
-            // 재시도 로직을 적용한 업데이트 함수 사용
-            await updateWithRetry(connection, selectedTotal.B_IDX);
+            await updateWithoutRetry(connection, selectedTotal.B_IDX);  // 잠금 문제 해결
 
             const { B_IDX } = selectedTotal;
 
-            // B_IDX 값을 이용해 bon_planing_sin에서 CON_NO 값을 추출
             const extractedConNo = await new Promise((resolve, reject) => {
                 connection.query(`SELECT CON_NO FROM bon_planing_sin WHERE B_IDX = ?`, [B_IDX], (err, results) => {
                     if (err) {
@@ -1793,7 +1776,6 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 
             const currentTime = getCurrentSeoulTime();
 
-            // 먼저 CON_NO가 이미 존재하는지 확인
             const existingLog = await new Promise((resolve, reject) => {
                 connection.query('SELECT * FROM bon_log WHERE CON_NO = ?', [extractedConNo], (selectError, selectResults) => {
                     if (selectError) {
@@ -1805,7 +1787,6 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             });
 
             if (existingLog) {
-                // CON_NO가 이미 존재하면 업데이트
                 await new Promise((resolve, reject) => {
                     connection.query(
                         'UPDATE bon_log SET CAR = ?, SANG_HA = ?, TIME = ? WHERE CON_NO = ?',
@@ -1820,7 +1801,6 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                     );
                 });
             } else {
-                // CON_NO가 존재하지 않으면 삽입
                 await new Promise((resolve, reject) => {
                     connection.query(
                         'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
@@ -1836,9 +1816,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                 });
             }
 
-            // 세션에 nextData 저장
             req.session.nextData = selectedTotal;
-
             res.json({ success: true, nextDispatch: selectedTotal });
         } else {
             res.status(404).json({ success: false, message: '적합한 배차를 찾을 수 없습니다.' });
@@ -1848,7 +1826,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         console.error(error);
         res.status(500).json({ success: false, message: '서버 내부 오류' });
     } finally {
-        connection.end(); // 모든 처리가 끝난 후에 연결을 종료합니다.
+        connection.end(); // 연결 종료
     }
 });
 
