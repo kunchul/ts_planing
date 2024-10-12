@@ -638,31 +638,20 @@ function queryWithReconnect(dbConfig, query, params, callback) {
     connection.connect((err) => {
         if (err) {
             console.error('Error connecting to database: ', err);
-            return callback({ success: false, error: err });
+            callback(err);
+            return;
         }
 
         connection.query(query, params, (err, results) => {
             if (err) {
                 console.error('Error executing query: ', err);
                 connection.end();
-                return callback({ success: false, error: err });
+                callback(err);
+                return;
             }
 
-            connection.end((closeErr) => {
-                if (closeErr) {
-                    console.error('Error closing the connection:', closeErr);
-                } else {
-                    console.log('Database connection closed successfully.');
-                }
-            });
-
-            if (results && results.length > 0) {
-                console.log('Query executed successfully, data: ', results);
-                callback({ success: true, data: results });
-            } else {
-                console.log('Query executed but no data found.');
-                callback({ success: true, data: [] });
-            }
+            connection.end();
+            callback(null, results);
         });
     });
 }
