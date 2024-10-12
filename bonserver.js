@@ -638,7 +638,8 @@ function queryWithReconnect(dbConfig, query, params, callback) {
     connection.connect((err) => {
         if (err) {
             console.error('Error connecting to database: ', err);
-            callback(err);
+            // 연결 실패 시에도 중단하지 않고 로그만 남김
+            callback(null, { success: false, error: err });
             return;
         }
 
@@ -646,12 +647,12 @@ function queryWithReconnect(dbConfig, query, params, callback) {
             if (err) {
                 console.error('Error executing query: ', err);
                 connection.end();
-                callback(err);
-                return;
+                // 쿼리 오류 발생 시 중단하지 않고 로그만 남기고 계속 진행
+                callback(null, { success: false, error: err });
+            } else {
+                connection.end();
+                callback(null, { success: true, data: results });
             }
-
-            connection.end();
-            callback(null, results);
         });
     });
 }
