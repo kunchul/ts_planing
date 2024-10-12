@@ -1101,17 +1101,23 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
             connection.end();
             return res.status(400).send('B_IDX value not set.');
         }
-
+    
         const selectedSangHa = row.SANG_HA;
-
-        // IN_USE = 1로 설정
-        connection.query('UPDATE bon_planing_sin SET IN_USE = 1 WHERE B_IDX = ?', [row.B_IDX], (err) => {
+    
+        // IN_USE = 1 및 RESERVE = "Y"로 설정
+        connection.query('UPDATE bon_planing_sin SET IN_USE = 1, RESERVE = "Y" WHERE B_IDX = ? AND IN_USE = 0', [row.B_IDX], (err, result) => {
             if (err) {
-                console.error('IN_USE 업데이트 중 오류:', err);
+                console.error('IN_USE 또는 RESERVE 업데이트 중 오류:', err);
                 connection.end();
-                return res.status(500).send('내부 서버 오류');
+                return res.status(500).send('데이터 업데이트 중 오류 발생');
             }
-
+    
+            if (result.affectedRows === 0) {
+                console.error('이미 처리 중인 데이터입니다. IN_USE = 1 또는 RESERVE = "Y" 상태입니다.');
+                connection.end();
+                return res.status(409).send('이미 처리 중인 데이터입니다.');
+            }
+    
             // bon_session 테이블에 데이터 삽입
             connection.query(
                 `INSERT INTO bon_session (NAME, CAR, PHONE, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, DATA_INS)
@@ -1123,36 +1129,28 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                         connection.end();
                         return res.status(500).send('내부 서버 오류');
                     }
-
-                    // bon_planing_sin 테이블의 RESERVE 값을 업데이트
-                    connection.query(`UPDATE bon_planing_sin SET RESERVE = "Y", IN_USE = 0 WHERE B_IDX = ?`, [row.B_IDX], (err) => {
-                        if (err) {
-                            console.error('bon_planing_sin 업데이트 중 오류:', err);
-                            connection.end();
-                            return res.status(500).send('내부 서버 오류');
+    
+                    // 세션 데이터 저장
+                    req.session.assignedData = {
+                        assignedTotal: row.TOTAL,
+                        currentData: {
+                            SANG_HA: row.SANG_HA,
+                            CON_NO: row.CON_NO,
+                            CON_KU: row.CON_KU,
+                            CON_KG: row.CON_KG,
+                            B_KUM_IN: row.B_KUM_IN,
+                            CON_TEMP: row.CON_TEMP,
+                            CON_CLASS: row.CON_CLASS,
+                            SASI: user.SASI
                         }
-
-                        req.session.assignedData = {
-                            assignedTotal: row.TOTAL,
-                            currentData: {
-                                SANG_HA: row.SANG_HA,
-                                CON_NO: row.CON_NO,
-                                CON_KU: row.CON_KU,
-                                CON_KG: row.CON_KG,
-                                B_KUM_IN: row.B_KUM_IN,
-                                CON_TEMP: row.CON_TEMP,
-                                CON_CLASS: row.CON_CLASS,
-                                SASI: user.SASI
-                            }
-                        };
-
-                        finalizeResponse();
-                    });
+                    };
+    
+                    finalizeResponse(); // 응답 처리
                 }
             );
         });
     }
-
+    
     function finalizeResponse() {
         res.render('index_배차', {
             user: { id: req.session.user.id, car: req.session.car, role: req.session.user.role },
@@ -1722,9 +1720,10 @@ app.post('/calculate-next-dispatch', async (req, res) => {
 
         if (selectedTotal) {
             const { B_IDX } = selectedTotal;
-
+        
+            // CON_NO 추출
             const extractedConNo = await new Promise((resolve, reject) => {
-                connection.query(`SELECT CON_NO FROM bon_planing_sin WHERE B_IDX = ?`, [B_IDX], (err, results) => {
+                connection.query('SELECT CON_NO FROM bon_planing_sin WHERE B_IDX = ?', [B_IDX], (err, results) => {
                     if (err) {
                         console.error('CON_NO 추출 중 오류:', err);
                         return reject(err);
@@ -1735,7 +1734,8 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                     resolve(results[0].CON_NO);
                 });
             });
-
+        
+            // 사용자 CAR 조회
             const carResult = await new Promise((resolve, reject) => {
                 connection.query('SELECT CAR FROM bon_user WHERE ID = ?', [req.session.user.id], (err, results) => {
                     if (err || results.length === 0) {
@@ -1745,9 +1745,10 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                     resolve(results[0].CAR);
                 });
             });
-
+        
             const currentTime = getCurrentSeoulTime();
-
+        
+            // bon_log에서 CON_NO가 이미 존재하는지 확인
             const existingLog = await new Promise((resolve, reject) => {
                 connection.query('SELECT * FROM bon_log WHERE CON_NO = ?', [extractedConNo], (selectError, selectResults) => {
                     if (selectError) {
@@ -1757,7 +1758,8 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                     resolve(selectResults.length > 0);
                 });
             });
-
+        
+            // 이미 존재하는 로그가 있으면 업데이트, 없으면 삽입
             if (existingLog) {
                 await new Promise((resolve, reject) => {
                     connection.query(
@@ -1787,10 +1789,21 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                     );
                 });
             }
-
-            // IN_USE 플래그 해제
+        
+            // IN_USE = 1 및 RESERVE = "Y"로 설정
             await new Promise((resolve, reject) => {
-                connection.query(`UPDATE bon_planing_sin SET IN_USE = 0 WHERE B_IDX = ?`, [selectedTotal.B_IDX], (err) => {
+                connection.query('UPDATE bon_planing_sin SET IN_USE = 1, RESERVE = "Y" WHERE B_IDX = ? AND IN_USE = 0', [selectedTotal.B_IDX], (err, result) => {
+                    if (err || result.affectedRows === 0) {
+                        console.error('IN_USE 또는 RESERVE 업데이트 중 오류:', err);
+                        return reject(new Error('데이터가 이미 사용 중이거나 예약된 상태입니다.'));
+                    }
+                    resolve();
+                });
+            });
+        
+            // 작업 완료 후 IN_USE 해제
+            await new Promise((resolve, reject) => {
+                connection.query('UPDATE bon_planing_sin SET IN_USE = 0 WHERE B_IDX = ?', [selectedTotal.B_IDX], (err) => {
                     if (err) {
                         console.error('IN_USE 해제 중 오류:', err);
                         return reject(err);
@@ -1798,7 +1811,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                     resolve();
                 });
             });
-
+        
             req.session.nextData = selectedTotal;
             res.json({ success: true, nextDispatch: selectedTotal });
         } else {
