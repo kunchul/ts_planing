@@ -638,24 +638,23 @@ function queryWithReconnect(dbConfig, query, params, callback) {
     connection.connect((err) => {
         if (err) {
             console.error('Error connecting to database: ', err);
-            // 연결 실패 시에도 중단하지 않고 로그만 남김
-            return callback({ success: false, error: 'Database connection failed' });
+            // 연결 실패 시 중단하지 않고 로그만 남김
+            return callback({ success: false, error: err });
         }
 
         connection.query(query, params, (err, results) => {
             if (err) {
                 console.error('Error executing query: ', err);
-                // 쿼리 오류 발생 시에도 연결을 닫고 로그만 남기고 진행
-                connection.end(() => {
-                    console.log('Database connection closed due to query error.');
-                });
-                return callback({ success: false, error: 'Query execution failed' });
+                connection.end();
+                // 쿼리 오류 발생 시 중단하지 않고 로그만 남기고 계속 진행
+                return callback({ success: false, error: err });
             }
 
-            // 정상 실행 후 연결 종료
             connection.end(() => {
                 console.log('Database connection closed successfully.');
             });
+
+            // 쿼리가 성공적으로 실행되면 성공 메시지와 함께 결과 반환
             callback({ success: true, data: results });
         });
     });
