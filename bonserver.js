@@ -638,7 +638,6 @@ function queryWithReconnect(dbConfig, query, params, callback) {
     connection.connect((err) => {
         if (err) {
             console.error('Error connecting to database: ', err);
-            // 연결 실패 시 중단하지 않고 로그만 남김
             return callback({ success: false, error: err });
         }
 
@@ -646,16 +645,24 @@ function queryWithReconnect(dbConfig, query, params, callback) {
             if (err) {
                 console.error('Error executing query: ', err);
                 connection.end();
-                // 쿼리 오류 발생 시 중단하지 않고 로그만 남기고 계속 진행
                 return callback({ success: false, error: err });
             }
 
-            connection.end(() => {
-                console.log('Database connection closed successfully.');
+            connection.end((closeErr) => {
+                if (closeErr) {
+                    console.error('Error closing the connection:', closeErr);
+                } else {
+                    console.log('Database connection closed successfully.');
+                }
             });
 
-            // 쿼리가 성공적으로 실행되면 성공 메시지와 함께 결과 반환
-            callback({ success: true, data: results });
+            if (results && results.length > 0) {
+                console.log('Query executed successfully, data: ', results);
+                callback({ success: true, data: results });
+            } else {
+                console.log('Query executed but no data found.');
+                callback({ success: true, data: [] });
+            }
         });
     });
 }
