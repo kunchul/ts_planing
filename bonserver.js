@@ -1342,7 +1342,7 @@ app.post('/api/insert-log', (req, res) => {
             const time = getCurrentSeoulTime();
 
             // 먼저 CON_NO가 이미 존재하는지 확인
-            connection.query('SELECT * FROM bon_log WHERE CON_NO = ?', [conNo], (selectError, selectResults) => {
+            connection.query('SELECT * FROM bon_log WHERE CON_NO = ? AND LOG_DEL ="N"', [conNo], (selectError, selectResults) => {
                 if (selectError) {
                     console.error('로그 조회 오류:', selectError);
                     connection.end();
@@ -1352,7 +1352,7 @@ app.post('/api/insert-log', (req, res) => {
                 if (selectResults.length > 0) {
                     // CON_NO가 이미 존재하면 업데이트
                     connection.query(
-                        'UPDATE bon_log SET CAR = ?, SANG_HA = ?, TIME = ? WHERE CON_NO = ?',
+                        'UPDATE bon_log SET CAR = ?, SANG_HA = ?, TIME = ?, LOG_DEL = "N" WHERE CON_NO = ?',
                         [carNumber, sangHa, time, conNo],
                         (updateError) => {
                             connection.end();
@@ -1366,7 +1366,7 @@ app.post('/api/insert-log', (req, res) => {
                 } else {
                     // CON_NO가 존재하지 않으면 삽입
                     connection.query(
-                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
+                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME, LOG_DEL) VALUES (?, ?, ?, ?, "N")',
                         [carNumber, conNo, sangHa, time],
                         (insertError) => {
                             connection.end();
@@ -1480,7 +1480,7 @@ app.post('/api/delete-log', (req, res) => {
     const { conNo } = req.body;
     const connection = createConnection(dbConfig1);
 
-    connection.query('DELETE FROM bon_log WHERE CON_NO = ?', [conNo], (error, results) => {
+    connection.query('UPDATE bon_log SET LOG_DEL = "Y" WHERE CON_NO = ?', [conNo], (error, results) => {
         connection.end();
         if (error) {
             return res.status(500).json({ success: false, message: 'Delete log error' });
@@ -2258,6 +2258,7 @@ app.get('/tslog', (req, res) => {
     const query = `
         SELECT * 
         FROM bon_log 
+        WHERE LOG_DEL = "N"
         ORDER BY TIME ASC 
     `;
 
@@ -2290,7 +2291,7 @@ app.post('/delete-order', (req, res) => {
 
     const placeholders = containerIds.map(() => '?').join(',');
     const sqlUpdateQuery = `UPDATE bon_planing_sin SET RESERVE = NULL WHERE CON_NO IN (${placeholders})`;
-    const sqlDeleteQuery = `DELETE FROM bon_log WHERE CON_NO IN (${placeholders})`;
+    const sqlDeleteQuery = `UPDATE bon_log SET LOG_DEL = 'Y' WHERE CON_NO IN (${placeholders})`;
     const sqlSelectBIdxQuery = `SELECT B_IDX FROM bon_planing_sin WHERE CON_NO IN (${placeholders})`;
     const sqlDeleteSessionQuery = `DELETE FROM bon_session WHERE CON_NO IN (${placeholders})`;
 
@@ -2387,7 +2388,7 @@ app.post('/delete-container2', (req, res) => {
     // 쿼리의 플레이스홀더 문자열 생성
     const placeholders = containerIds.map(() => '?').join(',');
 
-    const sqlDeleteLog = `DELETE FROM bon_log WHERE CON_NO IN (${placeholders})`;
+    const sqlDeleteLog = `UPDATE bon_log SET LOG_DEL = 'Y' WHERE CON_NO IN (${placeholders})`;
     const sqlDeletePlanning = `DELETE FROM bon_planing_sin WHERE CON_NO IN (${placeholders})`;
     const sqlDeleteSession = `DELETE FROM bon_session WHERE CON_NO IN (${placeholders})`;
 
@@ -2524,7 +2525,7 @@ app.post('/delete-tsorder', (req, res) => {
 
                 // 4단계: 2단계에서 업데이트된 CON_NO를 이용해 bon_log 테이블에서 일치하는 행 삭제
                 const conNoPlaceholders = conNoValues.map(() => '?').join(',');
-                const sqlDeleteLog = `DELETE FROM bon_log WHERE CON_NO IN (${conNoPlaceholders})`;
+                const sqlDeleteLog = `UPDATE bon_log SET LOG_DEL = 'Y' WHERE CON_NO IN (${conNoPlaceholders})`;
 
                 queryWithReconnect(dbConfig1, sqlDeleteLog, conNoValues, (deleteLogError, deleteLogResults) => {
                     if (deleteLogError) {
