@@ -1791,7 +1791,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             } else {
                 await new Promise((resolve, reject) => {
                     connection.query(
-                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
+                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME, LOG_DEL) VALUES (?, ?, ?, ?, "N")',
                         [carResult, extractedConNo, selectedTotal.SANG_HA, currentTime],
                         (insertError) => {
                             if (insertError) {
