@@ -1791,7 +1791,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             } else {
                 await new Promise((resolve, reject) => {
                     connection.query(
-                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME, LOG_DEL) VALUES (?, ?, ?, ?, "N")',
+                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
                         [carResult, extractedConNo, selectedTotal.SANG_HA, currentTime],
                         (insertError) => {
                             if (insertError) {
@@ -2290,7 +2290,7 @@ app.post('/delete-order', (req, res) => {
     }
 
     const placeholders = containerIds.map(() => '?').join(',');
-    const sqlUpdateQuery = `UPDATE bon_planing_sin SET RESERVE = NULL WHERE CON_NO IN (${placeholders})`;
+    const sqlUpdateQuery = `UPDATE bon_planing_sin SET RESERVE = NULL, IN_USE = '0' WHERE CON_NO IN (${placeholders})`;
     const sqlDeleteQuery = `UPDATE bon_log SET LOG_DEL = 'Y' WHERE CON_NO IN (${placeholders})`;
     const sqlSelectBIdxQuery = `SELECT B_IDX FROM bon_planing_sin WHERE CON_NO IN (${placeholders})`;
     const sqlDeleteSessionQuery = `DELETE FROM bon_session WHERE CON_NO IN (${placeholders})`;
