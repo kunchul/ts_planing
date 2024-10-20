@@ -2279,7 +2279,7 @@ app.get('/tslog', (req, res) => {
 
 
 // 배차취소
-app.post('/delete-order', async (req, res) => {
+app.post('/delete-order', (req, res) => {
     if (!req.session.user) {
         return res.status(401).send('로그인이 필요합니다.');
     }
@@ -2300,68 +2300,79 @@ app.post('/delete-order', async (req, res) => {
 
     let resultsMessage = [];
 
-    try {
-        // bon_planing_sin 테이블 업데이트
-        try {
-            const [updateResults] = await connection.promise().query(sqlUpdateQuery, containerIds);
-            resultsMessage.push(`${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되었습니다.`);
-        } catch (updateError) {
+    // bon_planing_sin 테이블 업데이트
+    connection.query(sqlUpdateQuery, containerIds, (updateError, updateResults) => {
+        if (updateError) {
             console.error('bon_planing_sin 업데이트 중 오류:', updateError);
-            resultsMessage.push('bon_planing_sin 업데이트 실패');
+            resultsMessage.push('bon_planing_sin 업데이트 실패: ' + updateError.message);
+        } else {
+            resultsMessage.push(`${updateResults.affectedRows}개의 행이 bon_planing_sin에서 업데이트되었습니다.`);
         }
 
         // bon_log 테이블 삭제
-        try {
-            const [deleteResults] = await connection.promise().query(sqlDeleteQuery, containerIds);
-            resultsMessage.push(`${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었습니다.`);
-        } catch (deleteError) {
-            console.error('bon_log 삭제 중 오류:', deleteError);
-            resultsMessage.push('bon_log 삭제 실패');
-        }
-
-        // B_IDX 조회
-        try {
-            const [selectResults] = await connection.promise().query(sqlSelectBIdxQuery, containerIds);
-            if (selectResults.length > 0) {
-                const bIdxValues = selectResults.map(row => row.B_IDX);
-                const bIdxPlaceholders = bIdxValues.map(() => '?').join(',');
-                const sqlUpdateTbaechaQuery = `
-                    UPDATE t_baecha 
-                    SET B_DATE = NULL, B_CAR = NULL, B_DRIVER = NULL, B_CAR_ID = NULL, C_IDX_IN = NULL 
-                    WHERE B_IDX IN (${bIdxPlaceholders}) AND B_DEL != 'Y'
-                `;
-
-                // t_baecha 테이블 업데이트
-                try {
-                    const [updateTbaechaResults] = await connection2.promise().query(sqlUpdateTbaechaQuery, bIdxValues);
-                    resultsMessage.push(`${updateTbaechaResults.affectedRows}개의 행이 t_baecha에서 업데이트되었습니다.`);
-                } catch (updateTbaechaError) {
-                    console.error('t_baecha 업데이트 중 오류:', updateTbaechaError);
-                    resultsMessage.push('t_baecha 업데이트 실패');
-                }
+        connection.query(sqlDeleteQuery, containerIds, (deleteError, deleteResults) => {
+            if (deleteError) {
+                console.error('bon_log 삭제 중 오류:', deleteError);
+                resultsMessage.push('bon_log 삭제 실패: ' + deleteError.message);
+            } else {
+                resultsMessage.push(`${deleteResults.affectedRows}개의 행이 bon_log에서 삭제되었습니다.`);
             }
-        } catch (selectError) {
-            console.error('B_IDX 조회 중 오류:', selectError);
-            resultsMessage.push('B_IDX 조회 실패');
-        }
 
-        // bon_session 삭제
-        try {
-            const [deleteSessionResults] = await connection.promise().query(sqlDeleteSessionQuery, containerIds);
-            resultsMessage.push(`${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`);
-        } catch (deleteSessionError) {
-            console.error('bon_session 삭제 중 오류:', deleteSessionError);
-            resultsMessage.push('bon_session 삭제 실패');
-        }
+            // B_IDX 조회
+            connection.query(sqlSelectBIdxQuery, containerIds, (selectError, selectResults) => {
+                if (selectError) {
+                    console.error('B_IDX 조회 중 오류:', selectError);
+                    resultsMessage.push('B_IDX 조회 실패: ' + selectError.message);
+                } else if (selectResults.length > 0) {
+                    const bIdxValues = selectResults.map(row => row.B_IDX);
+                    const bIdxPlaceholders = bIdxValues.map(() => '?').join(',');
+                    const sqlUpdateTbaechaQuery = `
+                        UPDATE t_baecha 
+                        SET B_DATE = NULL, B_CAR = NULL, B_DRIVER = NULL, B_CAR_ID = NULL, C_IDX_IN = NULL 
+                        WHERE B_IDX IN (${bIdxPlaceholders}) AND B_DEL != 'Y'
+                    `;
 
-        res.send({ message: resultsMessage });
-    } catch (error) {
-        console.error('전체 처리 중 오류:', error);
-        res.status(500).send('서버 오류가 발생했습니다.');
-    } finally {
-        connection.end();
-        connection2.end();
-    }
+                    // t_baecha 테이블 업데이트
+                    connection2.query(sqlUpdateTbaechaQuery, bIdxValues, (updateTbaechaError, updateTbaechaResults) => {
+                        if (updateTbaechaError) {
+                            console.error('t_baecha 업데이트 중 오류:', updateTbaechaError);
+                            resultsMessage.push('t_baecha 업데이트 실패: ' + updateTbaechaError.message);
+                        } else {
+                            resultsMessage.push(`${updateTbaechaResults.affectedRows}개의 행이 t_baecha에서 업데이트되었습니다.`);
+                        }
+
+                        // bon_session 삭제
+                        connection.query(sqlDeleteSessionQuery, containerIds, (deleteSessionError, deleteSessionResults) => {
+                            if (deleteSessionError) {
+                                console.error('bon_session 삭제 중 오류 발생:', deleteSessionError);
+                                resultsMessage.push('bon_session 삭제 실패: ' + deleteSessionError.message);
+                            } else {
+                                resultsMessage.push(`${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`);
+                            }
+
+                            connection.end();
+                            connection2.end();
+                            res.send({ message: resultsMessage });
+                        });
+                    });
+                } else {
+                    // B_IDX가 없는 경우 bon_session 삭제
+                    connection.query(sqlDeleteSessionQuery, containerIds, (deleteSessionError, deleteSessionResults) => {
+                        if (deleteSessionError) {
+                            console.error('bon_session 삭제 중 오류 발생:', deleteSessionError);
+                            resultsMessage.push('bon_session 삭제 실패: ' + deleteSessionError.message);
+                        } else {
+                            resultsMessage.push(`${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`);
+                        }
+
+                        connection.end();
+                        connection2.end();
+                        res.send({ message: resultsMessage });
+                    });
+                }
+            });
+        });
+    });
 });
 
 // 반입확인
@@ -2375,23 +2386,21 @@ app.post('/delete-container2', (req, res) => {
         return res.status(400).send('삭제할 컨테이너 번호를 확인하세요.');
     }
 
-    // 쿼리의 플레이스홀더 문자열 생성
     const placeholders = containerIds.map(() => '?').join(',');
 
     const sqlDeleteLog = `UPDATE bon_log SET LOG_DEL = 'Y' WHERE CON_NO IN (${placeholders})`;
     const sqlDeletePlanning = `DELETE FROM bon_planing_sin WHERE CON_NO IN (${placeholders})`;
     const sqlDeleteSession = `DELETE FROM bon_session WHERE CON_NO IN (${placeholders})`;
 
-    const connection = createConnection(dbConfig1); // MySQL 연결 생성
+    const connection = createConnection(dbConfig1);
 
-    // 결과 메시지를 저장할 배열
     let resultsMessage = [];
 
     // bon_log 테이블에서 삭제
     connection.query(sqlDeleteLog, containerIds, (error, results) => {
         if (error) {
             console.error('bon_log 삭제 중 오류:', error);
-            resultsMessage.push('bon_log 삭제 실패');
+            resultsMessage.push('bon_log 삭제 실패: ' + error.message);
         } else {
             resultsMessage.push(`${results.affectedRows}개의 행이 bon_log에서 삭제되었습니다.`);
         }
@@ -2400,7 +2409,7 @@ app.post('/delete-container2', (req, res) => {
         connection.query(sqlDeletePlanning, containerIds, (deleteError, deleteResults) => {
             if (deleteError) {
                 console.error('bon_planing_sin 삭제 중 오류:', deleteError);
-                resultsMessage.push('bon_planing_sin 삭제 실패');
+                resultsMessage.push('bon_planing_sin 삭제 실패: ' + deleteError.message);
             } else {
                 resultsMessage.push(`${deleteResults.affectedRows}개의 행이 bon_planing_sin에서 삭제되었습니다.`);
             }
@@ -2409,18 +2418,17 @@ app.post('/delete-container2', (req, res) => {
             connection.query(sqlDeleteSession, containerIds, (deleteSessionError, deleteSessionResults) => {
                 if (deleteSessionError) {
                     console.error('bon_session 삭제 중 오류 발생:', deleteSessionError);
-                    resultsMessage.push('bon_session 삭제 실패');
+                    resultsMessage.push('bon_session 삭제 실패: ' + deleteSessionError.message);
                 } else {
                     resultsMessage.push(`${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`);
                 }
 
-                // 모든 작업이 완료되면 결과 메시지 전송
-                connection.end(); // 연결 종료
+                connection.end();
                 res.send({ message: resultsMessage });
             });
         });
     });
-})
+});
 
 
 
