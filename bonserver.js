@@ -1764,7 +1764,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         
             // bon_log에서 CON_NO가 이미 존재하는지 확인
             const existingLog = await new Promise((resolve, reject) => {
-                connection.query('SELECT * FROM bon_log WHERE CON_NO = ?', [extractedConNo], (selectError, selectResults) => {
+                connection.query('SELECT * FROM bon_log WHERE CON_NO = ? AND LOG_DEL = "N"', [extractedConNo], (selectError, selectResults) => {
                     if (selectError) {
                         console.error('로그 조회 오류:', selectError);
                         return reject(selectError);
@@ -1791,7 +1791,7 @@ app.post('/calculate-next-dispatch', async (req, res) => {
             } else {
                 await new Promise((resolve, reject) => {
                     connection.query(
-                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME) VALUES (?, ?, ?, ?)',
+                        'INSERT INTO bon_log (CAR, CON_NO, SANG_HA, TIME, LOG_DEL) VALUES (?, ?, ?, ?, "N")',
                         [carResult, extractedConNo, selectedTotal.SANG_HA, currentTime],
                         (insertError) => {
                             if (insertError) {
