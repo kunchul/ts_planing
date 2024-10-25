@@ -988,7 +988,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
         };
 
         // bon_session 테이블에서 PHONE 값이 일치하는 레코드가 있는지 확인
-        connection.query('SELECT * FROM bon_session WHERE PHONE = ?', [PHONE], (err, sessionResults) => {
+        connection.query('SELECT * FROM bon_session WHERE PHONE = ? AND DIV_PART = "현재배차"', [PHONE], (err, sessionResults) => {
             if (err) {
                 console.error('bon_session 조회 중 오류:', err);
                 connection.end();
@@ -1120,9 +1120,9 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
 
             // bon_session 테이블에 데이터 삽입
             connection.query(
-                `INSERT INTO bon_session (NAME, CAR, PHONE, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, DATA_INS)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-                [user.NAME, user.CAR, user.PHONE, row.SANG_HA, row.CON_NO, row.CON_KU, row.CON_KG, row.B_KUM_IN, row.CON_TEMP, row.CON_CLASS, row.TOTAL, user.SASI],
+                `INSERT INTO bon_session (B_IDX, NAME, CAR, PHONE, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, DATA_INS, DIV_PART)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), '현재배차')`,
+                [row.B_IDX, user.NAME, user.CAR, user.PHONE, row.SANG_HA, row.CON_NO, row.CON_KU, row.CON_KG, row.B_KUM_IN, row.CON_TEMP, row.CON_CLASS, row.TOTAL, user.SASI],
                 (err) => {
                     if (err) {
                         console.error('bon_session 데이터 삽입 중 오류:', err);
@@ -1134,6 +1134,7 @@ app.get('/driver3', sessionChecker, sessionIDProvider, checkRoleForCarOrManager,
                     req.session.assignedData = {
                         assignedTotal: row.TOTAL,
                         currentData: {
+                            B_IDX: row.B_IDX,
                             SANG_HA: row.SANG_HA,
                             CON_NO: row.CON_NO,
                             CON_KU: row.CON_KU,
@@ -1352,8 +1353,8 @@ app.post('/api/insert-log', (req, res) => {
                 if (selectResults.length > 0) {
                     // CON_NO가 이미 존재하면 업데이트
                     connection.query(
-                        'UPDATE bon_log SET CAR = ?, SANG_HA = ?, TIME = ?, LOG_DEL = "N" WHERE CON_NO = ?',
-                        [carNumber, sangHa, time, conNo],
+                        'UPDATE bon_log SET CAR = ?, TIME = ?, LOG_DEL = "N" WHERE CON_NO = ?',
+                        [carNumber, time, conNo],
                         (updateError) => {
                             connection.end();
                             if (updateError) {
@@ -1393,16 +1394,94 @@ app.post('/api/update-sang-work', (req, res) => {
         return res.status(401).json({ success: false, message: '로그인이 필요합니다.' });
     }
 
+    const userId = req.session.user.id;
     const { conNo, status } = req.body;
     const connection = createConnection(dbConfig1);
 
-    connection.query('UPDATE bon_log SET SANG_WORK = ? WHERE CON_NO = ?', [status, conNo], (error, results) => {
-        connection.end();
-        if (error) {
-            return res.status(500).json({ success: false, message: 'Update SANG_WORK error' });
+    // bon_session 테이블에서 현재 로그인한 유저의 PHONE과 DIV_PART가 "현재배차"인 열의 B_IDX 조회
+    connection.query(
+        'SELECT B_IDX FROM bon_session WHERE PHONE = (SELECT PHONE FROM bon_user WHERE ID = ?) AND DIV_PART = "현재배차"',
+        [userId],
+        (err, sessionResults) => {
+            if (err) {
+                connection.end();
+                return res.status(500).json({ success: false, message: '세션 조회 중 오류 발생' });
+            }
+
+            if (sessionResults.length === 0) {
+                connection.end();
+                return res.status(404).json({ success: false, message: '배차 정보가 없습니다.' });
+            }
+
+            const bIdx = sessionResults[0].B_IDX;
+
+            // bon_planing_sin 테이블에서 B_IDX로 SANG_TIME 확인
+            connection.query('SELECT SANG_TIME FROM bon_planing_sin WHERE B_IDX = ?', [bIdx], (err, planResults) => {
+                if (err) {
+                    connection.end();
+                    return res.status(500).json({ success: false, message: '플래닝 조회 중 오류 발생' });
+                }
+
+                if (planResults.length === 0 || planResults[0].SANG_TIME === null) {
+                    connection.end();
+                    return res.status(400).json({ success: false, message: '상차 후 클릭하세요' });
+                }
+
+                // SANG_WORK 업데이트
+                connection.query(
+                    'UPDATE bon_log SET SANG_WORK = ? WHERE CON_NO = ?',
+                    [status, conNo],
+                    (err) => {
+                        connection.end();
+                        if (err) {
+                            return res.status(500).json({ success: false, message: 'SANG_WORK 업데이트 중 오류 발생' });
+                        }
+                        res.json({ success: true });
+                    }
+                );
+            });
         }
-        res.json({ success: true });
-    });
+    );
+});
+
+app.get('/api/check-sang-time', (req, res) => {
+    if (!req.session.user) {
+        return res.status(401).json({ success: false, message: '로그인이 필요합니다.' });
+    }
+
+    const userId = req.session.user.id;
+    const connection = createConnection(dbConfig1);
+
+    connection.query(
+        'SELECT B_IDX FROM bon_session WHERE PHONE = (SELECT PHONE FROM bon_user WHERE ID = ?) AND DIV_PART = "현재배차"',
+        [userId],
+        (err, sessionResults) => {
+            if (err) {
+                connection.end();
+                return res.status(500).json({ success: false, message: '세션 조회 중 오류 발생' });
+            }
+
+            if (sessionResults.length === 0) {
+                connection.end();
+                return res.status(404).json({ success: false, message: '배차 정보가 없습니다.' });
+            }
+
+            const bIdx = sessionResults[0].B_IDX;
+
+            connection.query('SELECT SANG_TIME FROM bon_planing_sin WHERE B_IDX = ?', [bIdx], (err, planResults) => {
+                connection.end();
+                if (err) {
+                    return res.status(500).json({ success: false, message: '플래닝 조회 중 오류 발생' });
+                }
+
+                if (planResults.length > 0 && planResults[0].SANG_TIME !== null) {
+                    return res.json({ success: true, sangTimeExists: true });
+                } else {
+                    return res.json({ success: true, sangTimeExists: false });
+                }
+            });
+        }
+    );
 });
 
 // HA_WORK 업데이트
@@ -1432,14 +1511,6 @@ app.post('/api/update-ha-work', async (req, res) => {
         } else {
             const userPhone = userResults[0].PHONE;
 
-            // bon_session 테이블에서 PHONE 값이 일치하는 행 삭제
-            const deleteSessionResults = await new Promise((resolve, reject) => {
-                connection.query('DELETE FROM bon_session WHERE PHONE = ?', [userPhone], (err, results) => {
-                    if (err) return reject(err);
-                    resolve(results);
-                });
-            });
-            resultsMessage.push(`${deleteSessionResults.affectedRows}개의 행이 bon_session에서 삭제되었습니다.`);
         }
 
         // bon_log 테이블의 HA_WORK 업데이트
@@ -1450,15 +1521,6 @@ app.post('/api/update-ha-work', async (req, res) => {
             });
         });
         resultsMessage.push(`${updateResults.affectedRows}개의 행이 bon_log에서 업데이트되었습니다.`);
-
-        // bon_planing_sin 테이블에서 CON_NO에 해당하는 행 삭제
-        const deletePlaningResults = await new Promise((resolve, reject) => {
-            connection.query('DELETE FROM bon_planing_sin WHERE CON_NO = ?', [conNo], (err, results) => {
-                if (err) return reject(err);
-                resolve(results);
-            });
-        });
-        resultsMessage.push(`${deletePlaningResults.affectedRows}개의 행이 bon_planing_sin에서 삭제되었습니다.`);
 
         // 모든 작업이 완료되었으므로 응답 전송
         res.json({ success: true, message: resultsMessage });
@@ -1565,122 +1627,210 @@ app.get('/get-current-data', (req, res) => {
 });
 
 
-//다음배차
+// 다음배차
 app.post('/calculate-next-dispatch', async (req, res) => {
     const connection = createConnection({ ...dbConfig1, multipleStatements: true }); // 자동 커밋 설정 및 다중 쿼리 허용
 
     try {
+        // 사용자 세션 확인
+        if (!req.session || !req.session.user) {
+            return res.status(401).json({ success: false, message: '사용자 세션이 없습니다.' });
+        }
+
         const userId = req.session.user.id;
 
         // 현재 로그인한 유저의 PHONE 값과 SASI 값을 가져오기
         const { userPhone, userSasi } = await new Promise((resolve, reject) => {
-            connection.query('SELECT PHONE, CONVERT(CAST(SASI AS BINARY) USING utf8mb4) AS SASI FROM bon_user WHERE ID = ?', [userId], (err, results) => {
-                if (err || results.length === 0) {
-                    console.error('유저 정보 조회 중 오류:', err);
-                    return reject(err || new Error('유저 정보를 가져올 수 없습니다.'));
+            connection.query(
+                'SELECT PHONE, CONVERT(CAST(SASI AS BINARY) USING utf8mb4) AS SASI FROM bon_user WHERE ID = ?',
+                [userId],
+                (err, results) => {
+                    if (err || results.length === 0) {
+                        console.error('유저 정보 조회 중 오류:', err);
+                        return reject(err || new Error('유저 정보를 가져올 수 없습니다.'));
+                    }
+                    resolve({
+                        userPhone: results[0].PHONE,
+                        userSasi: results[0].SASI
+                    });
                 }
-                resolve({
-                    userPhone: results[0].PHONE,
-                    userSasi: results[0].SASI
-                });
-            });
+            );
         });
 
-        // bon_session 테이블에서 PHONE 값이 일치하는 레코드의 TOTAL 값을 가져오기
-        const sessionTotal = await new Promise((resolve, reject) => {
-            connection.query('SELECT TOTAL FROM bon_session WHERE PHONE = ?', [userPhone], (err, results) => {
-                if (err) {
-                    console.error('TOTAL 조회 중 오류:', err);
-                    return reject(err);
+        // bon_session 테이블에서 DIV_PART가 "다음배차"이고, 현재 로그인한 유저의 PHONE과 일치하는 열의 B_IDX 확인
+        const existingSession = await new Promise((resolve, reject) => {
+            connection.query(
+                `SELECT B_IDX FROM bon_session WHERE DIV_PART = '다음배차' AND PHONE = ?`,
+                [userPhone],
+                (err, results) => {
+                    if (err) {
+                        console.error('세션 데이터 조회 중 오류:', err);
+                        return reject(err);
+                    }
+                    resolve(results.length > 0 ? results[0].B_IDX : null);
                 }
-                resolve(results.length > 0 ? results[0].TOTAL : null);
-            });
+            );
         });
-
-        let currentTotal = sessionTotal;
-        if (!currentTotal || !userSasi) {
-            return res.status(400).json({ message: 'currentTotal 또는 SASI 값이 누락되었습니다.' });
-        }
-
-        const integerTotal = Math.floor(currentTotal);
-        const currentTotalTrimmed = integerTotal.toString().slice(-3);
-
-        console.log(`Received currentTotal: ${currentTotal}`);
-        console.log(`Calculated currentTotalTrimmed: ${currentTotalTrimmed}`);
-
-        // 우선순위 필터링 범위 정의
-        const priorityRanges = {
-            '052-058': ['072-078', '092-100', '102-110', '052-058', '012-019', '032-038'],
-            '072-078': ['052-058', '092-100', '102-110', '072-078', '012-019', '032-038'],
-            '092-100': ['102-110', '012-019', '092-100', '052-058', '032-038', '072-078'],
-            '102-110': ['092-100', '032-038', '052-058', '102-110', '072-078', '012-019'],
-            '012-019': ['032-038', '012-019', '092-100', '102-110', '052-058', '072-078'],
-            '032-038': ['012-019', '032-038', '102-110', '092-100', '072-078', '052-058'],
-        };
-
-        let range = null;
-        for (const [key, value] of Object.entries(priorityRanges)) {
-            const [min, max] = key.split('-').map(Number);
-            if (Number(currentTotalTrimmed) >= min && Number(currentTotalTrimmed) <= max) {
-                range = value;
-                break;
-            }
-        }
-
-        if (!range) {
-            return res.status(400).json({ message: `유효하지 않은 currentTotalTrimmed 값: ${currentTotalTrimmed}` });
-        }
 
         let selectedTotal = null;
 
-        // 우선순위 범위에 따라 필터링하여 선택
-        for (const priority of range) {
-            const [min, max] = priority.split('-').map(Number);
-
-            // 첫 번째 쿼리 실행 (IN_USE = 0 조건 추가)
-            const possibleTotals = await new Promise((resolve, reject) => {
-                connection.query(`
-                    SELECT * 
-                    FROM bon_planing_sin 
-                    WHERE IN_USE = 0 AND RESERVE IS NULL
-                    AND B_BANIP = '1ST'
-                    AND (
-                        (? = '라인샤시' AND MOD(CAST(TOTAL AS DECIMAL(10,1)), 1) = 0)
-                        OR
-                        (? = '콤바인샤시')
-                    )
-                    ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
-                    LIMIT 1;
-                `, [userSasi, userSasi], (err, results) => {
-                    if (err) {
-                        console.error('쿼리 실행 중 오류:', err);
-                        return reject(err);
-                    }
-                    resolve(results);
-                });
-            });
-
-            if (possibleTotals.length > 0) {
-                selectedTotal = possibleTotals[0];  // 첫 번째 데이터를 바로 선택
-                console.log(`Selected row from first query: TOTAL=${selectedTotal.TOTAL}`);
-                
-                // IN_USE = 1로 설정
-                await new Promise((resolve, reject) => {
-                    connection.query(`UPDATE bon_planing_sin SET IN_USE = 1 WHERE B_IDX = ?`, [selectedTotal.B_IDX], (err) => {
+        if (existingSession) {
+            // 일치하는 B_IDX가 있으면 해당 데이터를 사용
+            selectedTotal = await new Promise((resolve, reject) => {
+                connection.query(
+                    'SELECT * FROM bon_planing_sin WHERE B_IDX = ?',
+                    [existingSession],
+                    (err, results) => {
                         if (err) {
-                            console.error('IN_USE 업데이트 중 오류:', err);
+                            console.error('bon_planing_sin 데이터 조회 중 오류:', err);
                             return reject(err);
                         }
-                        resolve();
-                    });
-                });
-                break; // 쿼리에서 선택되면 종료
+                        resolve(results.length > 0 ? results[0] : null);
+                    }
+                );
+            });
+
+            if (!selectedTotal) {
+                return res.status(404).json({ success: false, message: '해당 B_IDX에 대한 bon_planing_sin 데이터를 찾을 수 없습니다.' });
+            }
+        } else {
+            // 일치하는 데이터가 없으면 새 데이터를 삽입하기 위한 로직
+            const sessionTotal = await new Promise((resolve, reject) => {
+                connection.query(
+                    'SELECT TOTAL FROM bon_session WHERE PHONE = ? AND DIV_PART = "현재배차"',
+                    [userPhone],
+                    (err, results) => {
+                        if (err) {
+                            console.error('TOTAL 조회 중 오류:', err);
+                            return reject(err);
+                        }
+                        resolve(results.length > 0 ? results[0].TOTAL : null);
+                    }
+                );
+            });
+
+            let currentTotal = sessionTotal;
+            if (!currentTotal || !userSasi) {
+                return res.status(400).json({ success: false, message: 'currentTotal 또는 SASI 값이 누락되었습니다.' });
             }
 
-            // 두 번째 쿼리 실행
-            if (possibleTotals.length === 0) {
+            const integerTotal = Math.floor(currentTotal);
+            const currentTotalTrimmed = integerTotal.toString().slice(-3);
+
+            console.log(`Received currentTotal: ${currentTotal}`);
+            console.log(`Calculated currentTotalTrimmed: ${currentTotalTrimmed}`);
+
+            // 우선순위 필터링 범위 정의
+            const priorityRanges = {
+                '052-058': ['072-078', '092-100', '102-110', '052-058', '012-019', '032-038'],
+                '072-078': ['052-058', '092-100', '102-110', '072-078', '012-019', '032-038'],
+                '092-100': ['102-110', '012-019', '092-100', '052-058', '032-038', '072-078'],
+                '102-110': ['092-100', '032-038', '052-058', '102-110', '072-078', '012-019'],
+                '012-019': ['032-038', '012-019', '092-100', '102-110', '052-058', '072-078'],
+                '032-038': ['012-019', '032-038', '102-110', '092-100', '072-078', '052-058'],
+            };
+
+            let range = null;
+            for (const [key, value] of Object.entries(priorityRanges)) {
+                const [min, max] = key.split('-').map(Number);
+                const trimmedNum = Number(currentTotalTrimmed);
+                if (trimmedNum >= min && trimmedNum <= max) {
+                    range = value;
+                    break;
+                }
+            }
+
+            if (!range) {
+                return res.status(400).json({ success: false, message: `유효하지 않은 currentTotalTrimmed 값: ${currentTotalTrimmed}` });
+            }
+
+            // 우선순위 범위에 따라 필터링하여 선택
+            for (const priority of range) {
+                const [min, max] = priority.split('-').map(Number);
+
+                // 첫 번째 쿼리 실행 (IN_USE = 0 조건 추가)
+                const possibleTotals = await new Promise((resolve, reject) => {
+                    connection.query(
+                        `
+                        SELECT * 
+                        FROM bon_planing_sin 
+                        WHERE IN_USE = 0 AND RESERVE IS NULL
+                        AND B_BANIP = '1ST'
+                        AND (
+                            (? = '라인샤시' AND MOD(CAST(TOTAL AS DECIMAL(10,1)), 1) = 0)
+                            OR
+                            (? = '콤바인샤시')
+                        )
+                        ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
+                        LIMIT 1;
+                        `,
+                        [userSasi, userSasi],
+                        (err, results) => {
+                            if (err) {
+                                console.error('첫 번째 쿼리 실행 중 오류:', err);
+                                return reject(err);
+                            }
+                            resolve(results);
+                        }
+                    );
+                });
+
+                if (possibleTotals.length > 0) {
+                    selectedTotal = possibleTotals[0];
+                    console.log(`Selected row from first query: TOTAL=${selectedTotal.TOTAL}`);
+
+                    // IN_USE = 1로 설정
+                    await new Promise((resolve, reject) => {
+                        connection.query(
+                            'UPDATE bon_planing_sin SET IN_USE = 1 WHERE B_IDX = ?',
+                            [selectedTotal.B_IDX],
+                            (err) => {
+                                if (err) {
+                                    console.error('IN_USE 업데이트 중 오류:', err);
+                                    return reject(err);
+                                }
+                                resolve();
+                            }
+                        );
+                    });
+
+                    // bon_session에 데이터 삽입
+                    await new Promise((resolve, reject) => {
+                        connection.query(
+                            `INSERT INTO bon_session (B_IDX, NAME, CAR, PHONE, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, DATA_INS, DIV_PART)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), '다음배차')`,
+                            [
+                                selectedTotal.B_IDX,
+                                req.session.user.name,
+                                req.session.user.car,
+                                userPhone,
+                                selectedTotal.SANG_HA,
+                                selectedTotal.CON_NO,
+                                selectedTotal.CON_KU,
+                                selectedTotal.CON_KG,
+                                selectedTotal.B_KUM_IN,
+                                selectedTotal.CON_TEMP,
+                                selectedTotal.CON_CLASS,
+                                selectedTotal.TOTAL,
+                                userSasi
+                            ],
+                            (err) => {
+                                if (err) {
+                                    console.error('bon_session 데이터 삽입 중 오류:', err);
+                                    return reject(err);
+                                }
+                                resolve();
+                            }
+                        );
+                    });
+
+                    break; // 데이터가 선택되면 루프 종료
+                }
+
+                // 두 번째 쿼리 실행
                 const possibleTotalsSecond = await new Promise((resolve, reject) => {
-                    connection.query(`
+                    connection.query(
+                        `
                         SELECT * 
                         FROM bon_planing_sin 
                         WHERE CAST(SUBSTRING(CAST(TOTAL AS UNSIGNED), -3) AS UNSIGNED) BETWEEN ? AND ?
@@ -1693,91 +1843,141 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                         )
                         ORDER BY CAST(TOTAL AS DECIMAL(10, 1)) DESC
                         LIMIT 1;
-                    `, [min, max, userSasi, userSasi], (err, results) => {
-                        if (err) {
-                            console.error('두 번째 쿼리 실행 중 오류:', err);
-                            return reject(err);
+                        `,
+                        [min, max, userSasi, userSasi],
+                        (err, results) => {
+                            if (err) {
+                                console.error('두 번째 쿼리 실행 중 오류:', err);
+                                return reject(err);
+                            }
+                            resolve(results);
                         }
-                        resolve(results);
-                    });
+                    );
                 });
 
-                possibleTotalsSecond.forEach(row => {
-                    const totalValueStr = String(row.TOTAL).split('.')[0]; 
-                    const totalRightThree = totalValueStr.slice(-3); 
-                    const totalRightThreeNum = parseInt(totalRightThree, 10); 
-                    const totalValue = parseInt(totalValueStr, 10); 
+                for (const row of possibleTotalsSecond) {
+                    const totalValueStr = String(row.TOTAL).split('.')[0];
+                    const totalRightThree = totalValueStr.slice(-3);
+                    const totalRightThreeNum = parseInt(totalRightThree, 10);
+                    const totalValue = parseInt(totalValueStr, 10);
 
                     console.log(`Processing row from second query: TOTAL=${row.TOTAL}, totalRightThreeNum=${totalRightThreeNum}, totalValue=${totalValue}`);
 
                     if (totalRightThreeNum >= 12 && totalRightThreeNum <= 110 && totalValue <= 400000) {
                         console.log(`Match found from second query: TOTAL=${row.TOTAL}`);
-                        selectedTotal = row; 
-                    }
-                });
+                        selectedTotal = row;
 
-                if (selectedTotal) {
-                    // IN_USE = 1로 설정
-                    await new Promise((resolve, reject) => {
-                        connection.query(`UPDATE bon_planing_sin SET IN_USE = 1 WHERE B_IDX = ?`, [selectedTotal.B_IDX], (err) => {
-                            if (err) {
-                                console.error('IN_USE 업데이트 중 오류:', err);
-                                return reject(err);
-                            }
-                            resolve();
+                        // IN_USE = 1로 설정
+                        await new Promise((resolve, reject) => {
+                            connection.query(
+                                'UPDATE bon_planing_sin SET IN_USE = 1 WHERE B_IDX = ?',
+                                [selectedTotal.B_IDX],
+                                (err) => {
+                                    if (err) {
+                                        console.error('IN_USE 업데이트 중 오류:', err);
+                                        return reject(err);
+                                    }
+                                    resolve();
+                                }
+                            );
                         });
-                    });
-                    break;
+
+                        // bon_session에 데이터 삽입
+                        await new Promise((resolve, reject) => {
+                            connection.query(
+                                `INSERT INTO bon_session (B_IDX, NAME, CAR, PHONE, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, DATA_INS, DIV_PART)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), '다음배차')`,
+                                [
+                                    selectedTotal.B_IDX,
+                                    req.session.user.name,
+                                    req.session.user.car,
+                                    userPhone,
+                                    selectedTotal.SANG_HA,
+                                    selectedTotal.CON_NO,
+                                    selectedTotal.CON_KU,
+                                    selectedTotal.CON_KG,
+                                    selectedTotal.B_KUM_IN,
+                                    selectedTotal.CON_TEMP,
+                                    selectedTotal.CON_CLASS,
+                                    selectedTotal.TOTAL,
+                                    userSasi
+                                ],
+                                (err) => {
+                                    if (err) {
+                                        console.error('bon_session 데이터 삽입 중 오류:', err);
+                                        return reject(err);
+                                    }
+                                    resolve();
+                                }
+                            );
+                        });
+
+                        break; // 데이터가 선택되면 루프 종료
+                    }
                 }
+
+                if (selectedTotal) break; // 데이터가 선택되면 루프 종료
             }
         }
 
         if (selectedTotal) {
             const { B_IDX } = selectedTotal;
-        
+
             // CON_NO 추출
             const extractedConNo = await new Promise((resolve, reject) => {
-                connection.query('SELECT CON_NO FROM bon_planing_sin WHERE B_IDX = ?', [B_IDX], (err, results) => {
-                    if (err) {
-                        console.error('CON_NO 추출 중 오류:', err);
-                        return reject(err);
+                connection.query(
+                    'SELECT CON_NO FROM bon_planing_sin WHERE B_IDX = ?',
+                    [B_IDX],
+                    (err, results) => {
+                        if (err) {
+                            console.error('CON_NO 추출 중 오류:', err);
+                            return reject(err);
+                        }
+                        if (results.length === 0) {
+                            return reject(new Error('해당 B_IDX에 대한 CON_NO를 찾을 수 없습니다.'));
+                        }
+                        resolve(results[0].CON_NO);
                     }
-                    if (results.length === 0) {
-                        return reject(new Error('해당 B_IDX에 대한 CON_NO를 찾을 수 없습니다.'));
-                    }
-                    resolve(results[0].CON_NO);
-                });
+                );
             });
-        
+
             // 사용자 CAR 조회
             const carResult = await new Promise((resolve, reject) => {
-                connection.query('SELECT CAR FROM bon_user WHERE ID = ?', [req.session.user.id], (err, results) => {
-                    if (err || results.length === 0) {
-                        console.error('CAR 조회 중 오류:', err);
-                        return reject(err);
+                connection.query(
+                    'SELECT CAR FROM bon_user WHERE ID = ?',
+                    [req.session.user.id],
+                    (err, results) => {
+                        if (err || results.length === 0) {
+                            console.error('CAR 조회 중 오류:', err);
+                            return reject(err);
+                        }
+                        resolve(results[0].CAR);
                     }
-                    resolve(results[0].CAR);
-                });
+                );
             });
-        
+
             const currentTime = getCurrentSeoulTime();
-        
+
             // bon_log에서 CON_NO가 이미 존재하는지 확인
             const existingLog = await new Promise((resolve, reject) => {
-                connection.query('SELECT * FROM bon_log WHERE CON_NO = ? AND LOG_DEL = "N"', [extractedConNo], (selectError, selectResults) => {
-                    if (selectError) {
-                        console.error('로그 조회 오류:', selectError);
-                        return reject(selectError);
+                connection.query(
+                    'SELECT * FROM bon_log WHERE CON_NO = ? AND LOG_DEL = "N"',
+                    [extractedConNo],
+                    (selectError, selectResults) => {
+                        if (selectError) {
+                            console.error('로그 조회 오류:', selectError);
+                            return reject(selectError);
+                        }
+                        resolve(selectResults.length > 0);
                     }
-                    resolve(selectResults.length > 0);
-                });
+                );
             });
-        
+
             // 이미 존재하는 로그가 있으면 업데이트, 없으면 삽입
             if (existingLog) {
                 await new Promise((resolve, reject) => {
                     connection.query(
-                        'UPDATE bon_log SET CAR = ?, SANG_HA = ?, TIME = ? WHERE CON_NO = ?',
+                        'UPDATE bon_log SET CAR = ?, SANG_HA = ?, TIME = ?, LOG_DEL = "N" WHERE CON_NO = ?',
                         [carResult, selectedTotal.SANG_HA, currentTime, extractedConNo],
                         (updateError) => {
                             if (updateError) {
@@ -1803,12 +2003,12 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                     );
                 });
             }
-        
+
             // IN_USE = 1 및 RESERVE = "Y"로 설정
             await new Promise((resolve, reject) => {
                 connection.query(
-                    'UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ? AND IN_USE = 1', 
-                    [selectedTotal.B_IDX], 
+                    'UPDATE bon_planing_sin SET RESERVE = "Y" WHERE B_IDX = ?',
+                    [selectedTotal.B_IDX],
                     (err, result) => {
                         if (err || result.affectedRows === 0) {
                             console.error('RESERVE 업데이트 중 오류:', err);
@@ -1818,18 +2018,22 @@ app.post('/calculate-next-dispatch', async (req, res) => {
                     }
                 );
             });
-        
+
             // 작업 완료 후 IN_USE 해제
             await new Promise((resolve, reject) => {
-                connection.query('UPDATE bon_planing_sin SET IN_USE = 0 WHERE B_IDX = ?', [selectedTotal.B_IDX], (err) => {
-                    if (err) {
-                        console.error('IN_USE 해제 중 오류:', err);
-                        return reject(err);
+                connection.query(
+                    'UPDATE bon_planing_sin SET IN_USE = 0 WHERE B_IDX = ?',
+                    [selectedTotal.B_IDX],
+                    (err) => {
+                        if (err) {
+                            console.error('IN_USE 해제 중 오류:', err);
+                            return reject(err);
+                        }
+                        resolve();
                     }
-                    resolve();
-                });
+                );
             });
-        
+
             req.session.nextData = selectedTotal;
             res.json({ success: true, nextDispatch: selectedTotal });
         } else {
@@ -1837,12 +2041,13 @@ app.post('/calculate-next-dispatch', async (req, res) => {
         }
 
     } catch (error) {
-        console.error(error);
+        console.error('쿼리 처리 중 오류 발생:', error);
         res.status(500).json({ success: false, message: '서버 내부 오류' });
     } finally {
         connection.end(); // 연결 종료
     }
 });
+
 
 app.post('/start-next-batch', (req, res) => {
     if (!req.session || !req.session.user) {
@@ -1852,6 +2057,7 @@ app.post('/start-next-batch', (req, res) => {
     if (!req.session.nextData) {
         return res.status(400).json({ message: 'nextData가 세션에 없습니다.' });
     }
+
     const { SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI } = req.session.nextData;
     const userId = req.session.user.id;
     const connection = createConnection(dbConfig1); // 데이터베이스 연결 객체 생성
@@ -1872,21 +2078,78 @@ app.post('/start-next-batch', (req, res) => {
 
             const { PHONE: userPhone, NAME: userName, CAR: userCar } = userResults[0];
 
-            // bon_session 테이블에서 PHONE 값이 일치하는 레코드가 있는지 확인
-            connection.query('SELECT * FROM bon_session WHERE PHONE = ?', [userPhone], (err, sessionResults) => {
+            // 1. bon_session 테이블에서 삭제할 "현재배차" 레코드의 B_IDX 추출
+            connection.query('SELECT B_IDX FROM bon_session WHERE PHONE = ? AND DIV_PART = "현재배차"', [userPhone], (err, bIdxResults) => {
                 if (err) {
-                    console.error('bon_session 조회 중 오류:', err);
+                    console.error('B_IDX 조회 중 오류:', err);
                     connection.end();
-                    return res.status(500).json({ success: false, message: '데이터베이스 조회 오류' });
+                    return res.status(500).json({ success: false, message: 'B_IDX 조회 오류' });
                 }
 
-                if (sessionResults.length > 0) {
-                    // PHONE 값이 일치하는 레코드가 있으면 업데이트
+                const bIdxs = bIdxResults.map(row => row.B_IDX);
+
+                if (bIdxs.length > 0) {
+                    // 2. bon_plaing_sin 테이블에서 해당 B_IDX와 일치하는 레코드 삭제
+                    connection.query('DELETE FROM bon_planing_sin WHERE B_IDX IN (?)', [bIdxs], (err, deletePlaingSinResults) => {
+                        if (err) {
+                            console.error('bon_planing_sin 삭제 중 오류:', err);
+                            connection.end();
+                            return res.status(500).json({ success: false, message: 'bon_planing_sin 데이터 삭제 오류' });
+                        }
+
+                        // 3. 기존의 bon_session 삭제 및 업데이트 로직을 이어서 수행
+                        proceedWithBonSessionOperations();
+                    });
+                } else {
+                    // "현재배차" 레코드가 없으면 바로 bon_session 삭제 및 업데이트 로직 수행
+                    proceedWithBonSessionOperations();
+                }
+            });
+
+            // bon_session 삭제 및 업데이트 로직을 별도의 함수로 분리
+            function proceedWithBonSessionOperations() {
+                // bon_session 테이블에서 PHONE 값이 일치하는 레코드에 대해 작업 수행
+                // 1. DIV_PART가 "현재배차"인 레코드 삭제
+                connection.query('DELETE FROM bon_session WHERE PHONE = ? AND DIV_PART = "현재배차"', [userPhone], (err, deleteResults) => {
+                    if (err) {
+                        console.error('bon_session 삭제 중 오류:', err);
+                        connection.end();
+                        return res.status(500).json({ success: false, message: '데이터 삭제 오류' });
+                    }
+
+                    // 2. DIV_PART가 "다음배차"인 레코드를 "현재배차"로 업데이트
                     connection.query(`
                         UPDATE bon_session 
-                        SET NAME = ?, CAR = ?, SANG_HA = ?, CON_NO = ?, CON_KU = ?, CON_KG = ?, B_KUM_IN = ?, CON_TEMP = ?, CON_CLASS = ?, TOTAL = ?, SASI = ?, DATA_INS = ?
-                        WHERE PHONE = ?`,
-                        [userName, userCar, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, getCurrentSeoulTime(), userPhone],
+                        SET 
+                            NAME = ?, 
+                            CAR = ?, 
+                            SANG_HA = ?, 
+                            CON_NO = ?, 
+                            CON_KU = ?, 
+                            CON_KG = ?, 
+                            B_KUM_IN = ?, 
+                            CON_TEMP = ?, 
+                            CON_CLASS = ?, 
+                            TOTAL = ?, 
+                            SASI = ?, 
+                            DATA_INS = ?, 
+                            DIV_PART = "현재배차"
+                        WHERE PHONE = ? AND DIV_PART = "다음배차"`,
+                        [
+                            userName, 
+                            userCar, 
+                            SANG_HA, 
+                            CON_NO, 
+                            CON_KU, 
+                            CON_KG, 
+                            B_KUM_IN, 
+                            CON_TEMP, 
+                            CON_CLASS, 
+                            TOTAL, 
+                            SASI, 
+                            getCurrentSeoulTime(), 
+                            userPhone
+                        ],
                         (err, updateResults) => {
                             connection.end();
                             if (err) {
@@ -1894,29 +2157,17 @@ app.post('/start-next-batch', (req, res) => {
                                 return res.status(500).json({ success: false, message: '데이터 업데이트 오류' });
                             }
 
+                            // 업데이트된 레코드 수 확인 (선택 사항)
+                            if (updateResults.affectedRows === 0) {
+                                return res.status(404).json({ success: false, message: '업데이트할 "다음배차" 레코드를 찾을 수 없습니다.' });
+                            }
+
                             // currentTotal 값을 클라이언트에 반환
                             res.json({ success: true, message: 'bon_session이 성공적으로 업데이트되었습니다.', currentTotal: TOTAL });
                         }
                     );
-                } else {
-                    // PHONE 값이 일치하는 레코드가 없으면 새 레코드를 삽입
-                    connection.query(`
-                        INSERT INTO bon_session (NAME, CAR, PHONE, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, DATA_INS) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                        [userName, userCar, userPhone, SANG_HA, CON_NO, CON_KU, CON_KG, B_KUM_IN, CON_TEMP, CON_CLASS, TOTAL, SASI, getCurrentSeoulTime()],
-                        (err, insertResults) => {
-                            connection.end();
-                            if (err) {
-                                console.error('bon_session 삽입 중 오류:', err);
-                                return res.status(500).json({ success: false, message: '데이터 삽입 오류' });
-                            }
-
-                            // currentTotal 값을 클라이언트에 반환
-                            res.json({ success: true, message: 'bon_session이 성공적으로 삽입되었습니다.', currentTotal: TOTAL });
-                        }
-                    );
-                }
-            });
+                });
+            }
         });
     });
 });
@@ -1946,6 +2197,7 @@ app.post('/end-driving', (req, res) => {
             return res.status(500).send({ success: false, message: "내부 서버 오류" });
         }
 
+        // 사용자 정보 조회
         connection1.query('SELECT CAR, PHONE FROM bon_user WHERE ID = ?', [userId], (err, userResults) => {
             if (err) {
                 console.error('사용자 데이터 가져오는 중 오류 발생:', err);
@@ -1957,6 +2209,7 @@ app.post('/end-driving', (req, res) => {
                 const userCar = userResults[0].CAR;
                 const userPhone = userResults[0].PHONE;
 
+                // bon_carplayer 데이터 조회
                 connection1.query('SELECT * FROM bon_carplayer WHERE CAR = ?', [userCar], (err, carResults) => {
                     if (err) {
                         console.error('bon_carplayer 데이터 가져오는 중 오류 발생:', err);
@@ -1965,6 +2218,7 @@ app.post('/end-driving', (req, res) => {
                     }
 
                     if (carResults.length > 0) {
+                        // bon_carplayer 업데이트: OFF 시간 설정
                         connection1.query('UPDATE bon_carplayer SET OFF = ? WHERE CAR = ? AND OFF IS NULL', [currentTime, userCar], (err) => {
                             if (err) {
                                 console.error('bon_carplayer 업데이트 중 오류 발생:', err);
@@ -1972,65 +2226,17 @@ app.post('/end-driving', (req, res) => {
                                 return res.status(500).send({ success: false, message: "내부 서버 오류" });
                             }
 
-                            // RESERVE 값 제거 작업
-                            connection1.query('UPDATE bon_planing_sin SET RESERVE = NULL WHERE CON_NO = ?', [CON_NO], (err) => {
+                            // bon_session에서 PHONE 값이 일치하는 행 삭제
+                            connection1.query('DELETE FROM bon_session WHERE PHONE = ?', [userPhone], (err) => {
+                                connection1.end();
+                                connection2.end();
+
                                 if (err) {
-                                    console.error('bon_planing_sin 업데이트 중 오류 발생:', err);
-                                    connection1.end();
+                                    console.error('bon_session에서 PHONE 값 삭제 중 오류 발생:', err);
                                     return res.status(500).send({ success: false, message: "내부 서버 오류" });
                                 }
 
-                                // bon_planing_sin에서 B_IDX 가져오기
-                                connection1.query('SELECT B_IDX FROM bon_planing_sin WHERE CON_NO = ?', [CON_NO], (err, planingSinResult) => {
-                                    if (err) {
-                                        console.error('bon_planing_sin에서 B_IDX 가져오는 중 오류 발생:', err);
-                                        connection1.end();
-                                        return res.status(500).send({ success: false, message: "내부 서버 오류" });
-                                    }
-
-                                    if (planingSinResult.length > 0) {
-                                        const B_IDX = planingSinResult[0].B_IDX;
-
-                                        // t_baecha에서 해당 B_IDX의 특정 컬럼을 NULL로 업데이트
-                                        connection2.connect((err) => {
-                                            if (err) {
-                                                console.error('dbConfig2 데이터베이스 연결 중 오류 발생:', err);
-                                                connection1.end();
-                                                return res.status(500).send({ success: false, message: "내부 서버 오류" });
-                                            }
-
-                                            const query = `
-                                                UPDATE t_baecha 
-                                                SET B_CAR = NULL, B_DRIVER = NULL, B_CAR_ID = NULL, C_IDX_IN = NULL, B_DATE = NULL 
-                                                WHERE B_IDX = ? AND B_DIV_WORK = ?`;
-
-                                            connection2.query(query, [B_IDX, 'TS'], (err, result) => {
-                                                if (err) {
-                                                    console.error('t_baecha 업데이트 중 오류 발생:', err);
-                                                    connection1.end();
-                                                    connection2.end();
-                                                    return res.status(500).send({ success: false, message: "내부 서버 오류" });
-                                                }
-
-                                                // bon_session에서 PHONE 값이 일치하는 행 삭제
-                                                connection1.query('DELETE FROM bon_session WHERE PHONE = ?', [userPhone], (err) => {
-                                                    connection1.end();
-                                                    connection2.end();
-
-                                                    if (err) {
-                                                        console.error('bon_session에서 PHONE 값 삭제 중 오류 발생:', err);
-                                                        return res.status(500).send({ success: false, message: "내부 서버 오류" });
-                                                    }
-
-                                                    return res.send({ success: true, message: "운행 종료 처리 완료 및 세션 데이터 삭제 완료" });
-                                                });
-                                            });
-                                        });
-                                    } else {
-                                        connection1.end();
-                                        return res.status(404).send({ success: false, message: "해당 데이터를 찾을 수 없습니다." });
-                                    }
-                                });
+                                return res.send({ success: true, message: "운행 종료 처리 완료 및 세션 데이터 삭제 완료" });
                             });
                         });
                     } else {
@@ -2429,7 +2635,6 @@ app.post('/delete-container2', (req, res) => {
         });
     });
 });
-
 
 
 // 본선오더 페이지----------------------------------------------------------------------------
