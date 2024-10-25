@@ -260,8 +260,6 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentTotal;
     let sasiValue;
     let isUnloadingComplete = false; // 하차완료 여부를 확인하는 플래그 변수
-    // let loadingCompleteTimeout;
-    // let unloadingCompleteTimeout;
 
     function fetchCurrentTotal() {
         fetch('/get-current-data')
@@ -287,53 +285,99 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 상차완료 버튼 클릭 이벤트 처리
     document.getElementById('loadingComplete').addEventListener('click', function() {
-    if (!currentTotal || !sasiValue) {
-        console.error('currentTotal 또는 SASI 값이 설정되지 않았습니다.');
-        alert('TOTAL 또는 SASI 값이 설정되지 않았습니다.');
-        return;
-    }
+        // 먼저 SANG_TIME을 확인하는 API 호출
+        fetch('/api/check-sang-time', {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.sangTimeExists) {
+                // SANG_TIME이 있으면 상차완료 로직 실행
+                if (!currentTotal || !sasiValue) {
+                    console.error('currentTotal 또는 SASI 값이 설정되지 않았습니다.');
+                    alert('TOTAL 또는 SASI 값이 설정되지 않았습니다.');
+                    return;
+                }
 
-    //clearTimeout(loadingCompleteTimeout); // 상차완료 타이머 클리어
+                // 상차 완료 후 다음 배차 계산 로직
+                fetch('/calculate-next-dispatch', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ currentTotal, SASI: sasiValue })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => { throw new Error(text); });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('SANG_HA2').innerText = data.nextDispatch.SANG_HA;
+                        document.getElementById('CON_NO2').innerText = data.nextDispatch.CON_NO;
+                        document.getElementById('CON_KU2').innerText = data.nextDispatch.CON_KU;
+                        document.getElementById('nextDispatchSection').style.display = 'block';
 
-    fetch('/calculate-next-dispatch', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ currentTotal, SASI: sasiValue })
-    })
-    .then(response => {
-        if (!response.ok) {
-            return response.text().then(text => { throw new Error(text); });
-        }
-        return response.json();
-    })
-    .then(data => {
-        if (data.success) {
-            document.getElementById('SANG_HA2').innerText = data.nextDispatch.SANG_HA;
-            document.getElementById('CON_NO2').innerText = data.nextDispatch.CON_NO;
-            document.getElementById('CON_KU2').innerText = data.nextDispatch.CON_KU;
-            document.getElementById('nextDispatchSection').style.display = 'block';
+                        document.getElementById('endDriving2').style.display = 'none';
+                        document.getElementById('endDriving').style.display = 'none';
+                        document.getElementById('startNextBatch').style.display = 'none';
+                        document.getElementById('loadingComplete').style.display = 'none';
+                        document.getElementById('unloadingComplete').style.display = 'block';
 
-            document.getElementById('endDriving2').style.display = 'none';
-            document.getElementById('loadingComplete').style.display = 'none';
-            document.getElementById('unloadingComplete').style.display = 'block';
+                        isUnloadingComplete = false; // 다음 배차를 위해 초기화
+                    } else {
+                        alert(data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('다음 배차 계산 중 오류 발생:', error);
+                    alert('통합배차 종료입니다. 배차계에 문의 해주세요.');
+                    document.getElementById('SANG_HA2').style.display = 'none';
+                    document.getElementById('CON_NO2').style.display = 'none';
+                    document.getElementById('CON_KU2').style.display = 'none';
+                    document.getElementById('endDriving2').style.display = 'none';
+                    document.getElementById('unloadingComplete').style.display = 'block';
+                    document.getElementById('loadingComplete').style.display = 'none';
+                    document.getElementById('copino2').style.display = 'none';
+                    document.getElementById('startNextBatch').style.display = 'none';
+                    
+                });
 
-            isUnloadingComplete = false; // 다음 배차를 위해 초기화
-
-            // 하차완료 타이머 시작 (3시간)
-            //unloadingCompleteTimeout = setTimeout(function() {
-            //    endDriving();
-            //}, 3 * 60 * 60 * 1000); // 2시간 후 실행
-        } else {
-            alert(data.message);
-        }
-    })
-    .catch(error => {
-        console.error('다음 배차 계산 중 오류 발생:', error);
-        alert('배차 계산 중 오류가 발생했습니다. (배차계 문의)');
+                // 상차 완료 업데이트 로직
+                const conNo = document.getElementById('CON_NO').innerText.trim();
+                fetch('/api/update-sang-work', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ conNo: conNo, status: '완료' })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log('상차 완료 업데이트 성공:', data);
+                    } else {
+                        console.error('상차 완료 업데이트 실패:', data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('상차 완료 업데이트 중 오류 발생:', error);
+                });
+            } else {
+                // SANG_TIME이 없으면 경고 메시지
+                alert("상차 후 클릭하세요.");
+            }
+        })
+        .catch(error => {
+            console.error('상차시간 확인 중 오류:', error);
+            alert('상차시간 확인 중 오류가 발생했습니다.');
+        });
     });
-});
 
     document.getElementById('unloadingComplete').addEventListener('click', function() {
         console.log("하차 완료 버튼 클릭됨.");
@@ -352,6 +396,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.log('하차 완료 업데이트 성공:', data);
                 isUnloadingComplete = true; // 하차 완료 상태 설정
                 alert('하차 완료 처리 되었습니다.');
+                document.getElementById('endDriving').style.display = 'block';
+                document.getElementById('startNextBatch').style.display = 'block';
             } else {
                 console.error('하차 완료 업데이트 실패:', data.message);
                 alert('하차 완료 실패: 다시 로그인을 시도해주세요. ' + data.message);
@@ -367,11 +413,6 @@ document.addEventListener('DOMContentLoaded', function() {
         if (confirm("운행을 정말 종료하시겠습니까?")) {
             console.log("운행종료 버튼 클릭됨.");
             const CON_NO = document.getElementById('CON_NO').innerText.trim();
-            if (!CON_NO) {
-                console.error('CON_NO 값이 설정되지 않았습니다.');
-                alert('CON_NO 값이 설정되지 않았습니다.');
-                return;
-            }
 
             fetch('/end-driving', {
                 method: 'POST',
@@ -403,11 +444,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (confirm("운행을 정말 종료하시겠습니까?")) {
             console.log("운행종료 버튼 클릭됨.");
             const CON_NO = document.getElementById('CON_NO2').innerText.trim();
-            if (!CON_NO) {
-                console.error('CON_NO 값이 설정되지 않았습니다.');
-                alert('CON_NO 값이 설정되지 않았습니다.');
-                return;
-            }
+
 
             fetch('/end-driving', {
                 method: 'POST',
@@ -533,31 +570,6 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 
-
-document.getElementById('loadingComplete').addEventListener('click', function() {
-    const conNo = document.getElementById('CON_NO').innerText.trim();
-
-    fetch('/api/update-sang-work', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ conNo: conNo, status: '완료' })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            console.log('상차 완료 업데이트 성공:', data);
-        } else {
-            console.error('상차 완료 업데이트 실패:', data.message);
-        }
-    })
-    .catch(error => {
-        console.error('상차 완료 업데이트 중 오류 발생:', error);
-    });
-});
-
-
 document.getElementById('copino').addEventListener('click', function() {
     if (confirm("전송하시겠습니까?")) {  // 확인창을 표시
         console.log("copino 버튼 클릭됨");
@@ -626,34 +638,45 @@ document.getElementById('copino2').addEventListener('click', function() {
     }
 });
 
-
-
-
-
-    document.getElementById('loadingComplete').addEventListener('click', function() {
-        const newLocation = document.getElementById('SANG_HA').innerText.trim();
-        const newcunt = document.getElementById('CON_NO').innerText.trim(); // 컨테이너 번호 가져오기
-
-        fetch('/api/update-current-location', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ newLocation, newcunt }) // newLocation과 newcunt 값을 함께 전송
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                console.log('CURRENT_LOCATION 업데이트 완료:', data.message);
-            } else {
-                console.error('CURRENT_LOCATION 업데이트 실패:', data.message);
-            }
-        })
-        .catch(error => {
-            console.error('CURRENT_LOCATION 업데이트 중 오류 발생:', error);
-            alert('업데이트 중 오류가 발생했습니다.');
-        });
+document.getElementById('loadingComplete').addEventListener('click', function() {
+    // /api/check-sang-time API를 먼저 호출하여 상차 시간 확인
+    fetch('/api/check-sang-time', {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success && data.sangTimeExists) {
+            // 상차시간이 존재할 경우, 다음 배차 로직 실행
+            fetch('/calculate-next-dispatch', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ currentTotal, SASI: sasiValue })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('SANG_HA2').innerText = data.nextDispatch.SANG_HA;
+                    document.getElementById('CON_NO2').innerText = data.nextDispatch.CON_NO;
+                    document.getElementById('CON_KU2').innerText = data.nextDispatch.CON_KU;
+                    document.getElementById('nextDispatchSection').style.display = 'block'; // 다음 배차 섹션 표시
+                }
+            });
+        } else {
+            // 상차시간이 없을 경우, 경고 메시지 표시하고 다음 배차 섹션 숨기기
+            
+            document.getElementById('nextDispatchSection').style.display = 'none'; // 다음 배차 섹션 숨기기
+        }
+    })
+    .catch(error => {
+        console.error('상차시간 확인 중 오류:', error);
+        
     });
+});
 
 document.getElementById('loadingComplete').addEventListener('click', function() {
     // nextDispatchSection을 보이게 합니다.
@@ -699,8 +722,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // 페이지 로드 시 히스토리 상태 추가
     history.replaceState(null, null, location.href);
 });
-
-
 
 
 
